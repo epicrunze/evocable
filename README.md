@@ -1,4 +1,4 @@
-# e-vocable
+# evocable
 Creating audiobooks using AI
 
 # TODO
