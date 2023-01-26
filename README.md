@@ -7,10 +7,10 @@ Creating audiobooks using AI
 2. Create server to process books and stream speech
 
 
-3. Create Android app to receive stream
+3. Create web app to receive stream
 
 
 # WORKING
 
-- Create Android app to receive stream
-  - Building in kotlin using Android Studio
+- Create web app to receive stream
+
