@@ -7,9 +7,12 @@ To start using language models:
 ```
 $ cd evocable
 $ git clone https://github.com/facebookresearch/fairseq.git
-$ pip install 
-
+$ pip install -e fairseq
+$ pip install -e text2speech
 ```
+
+Done! :D
+
 
 # TODO
 
