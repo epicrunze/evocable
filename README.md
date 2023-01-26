@@ -1,6 +1,16 @@
 # evocable
 Creating audiobooks using AI
 
+## Usage
+To start using language models:
+
+```
+$ cd evocable
+$ git clone https://github.com/facebookresearch/fairseq.git
+$ pip install 
+
+```
+
 # TODO
 
 1. Create ML model to synthesize speech
