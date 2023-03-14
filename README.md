@@ -12,7 +12,6 @@ $ pip install -e text2speech
 ```
 
 Done! :D
-test :D
 
 # TODO
 
