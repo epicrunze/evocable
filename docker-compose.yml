@@ -1,0 +1,109 @@
+version: '3.9'
+
+services:
+  extraction:
+    build: ./services/extraction
+    volumes:
+      - input_data:/data/input
+      - extraction_output:/data/output
+    environment:
+      - PYTHONUNBUFFERED=1
+    healthcheck:
+      test: ["CMD", "python", "/src/extract.py", "--healthcheck"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - pipeline
+    logging:
+      driver: "json-file"
+
+  segmentation:
+    build: ./services/segmentation
+    volumes:
+      - extraction_output:/data/input
+      - segmentation_output:/data/output
+    depends_on:
+      extraction:
+        condition: service_healthy
+    networks:
+      - pipeline
+    logging:
+      driver: "json-file"
+
+  tts:
+    build: ./services/tts
+    runtime: nvidia
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - segmentation_output:/data/input
+      - tts_output:/data/output
+    depends_on:
+      segmentation:
+        condition: service_started
+    networks:
+      - pipeline
+    logging:
+      driver: "json-file"
+
+  audioproc:
+    build: ./services/audioproc
+    volumes:
+      - tts_output:/data/input
+      - audioproc_output:/data/output
+    depends_on:
+      tts:
+        condition: service_started
+    networks:
+      - pipeline
+    logging:
+      driver: "json-file"
+
+  packaging:
+    build: ./services/packaging
+    volumes:
+      - audioproc_output:/data/input
+      - packaging_output:/data/output
+    depends_on:
+      audioproc:
+        condition: service_started
+    networks:
+      - pipeline
+    logging:
+      driver: "json-file"
+
+  uploader:
+    build: ./services/uploader
+    volumes:
+      - packaging_output:/data/input
+      - output_data:/data/output
+      - ./config/docker/.env:/app/.env:ro
+    depends_on:
+      packaging:
+        condition: service_started
+    networks:
+      - pipeline
+    logging:
+      driver: "json-file"
+
+networks:
+  pipeline:
+    driver: bridge
+
+volumes:
+  input_data:
+  extraction_output:
+  segmentation_output:
+  tts_output:
+  audioproc_output:
+  packaging_output:
+  output_data: 
