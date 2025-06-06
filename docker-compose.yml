@@ -2,7 +2,9 @@ version: '3.9'
 
 services:
   extraction:
-    build: ./services/extraction
+    build:
+      context: .
+      dockerfile: services/extraction/Dockerfile
     volumes:
       - input_data:/data/input
       - extraction_output:/data/output
@@ -19,7 +21,9 @@ services:
       driver: "json-file"
 
   segmentation:
-    build: ./services/segmentation
+    build:
+      context: .
+      dockerfile: services/segmentation/Dockerfile
     volumes:
       - extraction_output:/data/input
       - segmentation_output:/data/output
@@ -32,7 +36,9 @@ services:
       driver: "json-file"
 
   tts:
-    build: ./services/tts
+    build:
+      context: .
+      dockerfile: services/tts/Dockerfile
     runtime: nvidia
     deploy:
       resources:
@@ -56,7 +62,9 @@ services:
       driver: "json-file"
 
   audioproc:
-    build: ./services/audioproc
+    build:
+      context: .
+      dockerfile: services/audioproc/Dockerfile
     volumes:
       - tts_output:/data/input
       - audioproc_output:/data/output
@@ -69,7 +77,9 @@ services:
       driver: "json-file"
 
   packaging:
-    build: ./services/packaging
+    build:
+      context: .
+      dockerfile: services/packaging/Dockerfile
     volumes:
       - audioproc_output:/data/input
       - packaging_output:/data/output
@@ -82,7 +92,9 @@ services:
       driver: "json-file"
 
   uploader:
-    build: ./services/uploader
+    build:
+      context: .
+      dockerfile: services/uploader/Dockerfile
     volumes:
       - packaging_output:/data/input
       - output_data:/data/output

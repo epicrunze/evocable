@@ -1,5 +1,6 @@
-FROM python:3.10-slim
+FROM python:3.11
 WORKDIR /src
-COPY ../../src/segment.py ./
-RUN pip install --no-cache-dir spacy ssml
+COPY src/segment.py ./
+RUN pip install --upgrade pip
+RUN pip install --no-cache-dir spacy
 CMD ["python", "segment.py"] 
