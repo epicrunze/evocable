@@ -1,121 +1,168 @@
-version: '3.9'
-
 services:
-  extraction:
-    build:
-      context: .
-      dockerfile: services/extraction/Dockerfile
-    volumes:
-      - input_data:/data/input
-      - extraction_output:/data/output
+  # API Gateway - handles HTTP requests and coordinates workflow
+  api:
+    build: ./services/api
+    image: audiobook-api:latest
+    ports:
+      - "8000:8000"
     environment:
-      - PYTHONUNBUFFERED=1
+      API_KEY: "${API_KEY:-default-dev-key}"
+      STORAGE_URL: "http://storage:8001"
+      REDIS_URL: "redis://redis:6379"
+    volumes:
+      - segment_data:/data/ogg:ro  # Read-only access to serve audio chunks
+    depends_on:
+      - storage
+      - redis
+    restart: unless-stopped
     healthcheck:
-      test: ["CMD", "python", "/src/extract.py", "--healthcheck"]
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
       timeout: 10s
       retries: 3
-    networks:
-      - pipeline
-    logging:
-      driver: "json-file"
 
-  segmentation:
-    build:
-      context: .
-      dockerfile: services/segmentation/Dockerfile
-    volumes:
-      - extraction_output:/data/input
-      - segmentation_output:/data/output
-    depends_on:
-      extraction:
-        condition: service_healthy
-    networks:
-      - pipeline
-    logging:
-      driver: "json-file"
-
-  tts:
-    build:
-      context: .
-      dockerfile: services/tts/Dockerfile
-    runtime: nvidia
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
+  # Centralized storage and metadata management
+  storage:
+    build: ./services/storage
+    image: audiobook-storage:latest
+    ports:
+      - "8001:8001"
     environment:
-      - NVIDIA_VISIBLE_DEVICES=all
-      - PYTHONUNBUFFERED=1
+      DATABASE_URL: "sqlite:///:memory:"
+      TEXT_DATA_PATH: "/data/text"
+      WAV_DATA_PATH: "/data/wav"
+      SEGMENT_DATA_PATH: "/data/ogg"
     volumes:
-      - segmentation_output:/data/input
-      - tts_output:/data/output
-    depends_on:
-      segmentation:
-        condition: service_started
-    networks:
-      - pipeline
-    logging:
-      driver: "json-file"
+      - text_data:/data/text
+      - wav_data:/data/wav
+      - segment_data:/data/ogg
+      - meta_data:/data/meta
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
-  audioproc:
-    build:
-      context: .
-      dockerfile: services/audioproc/Dockerfile
+  # Message broker for service coordination
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
     volumes:
-      - tts_output:/data/input
-      - audioproc_output:/data/output
-    depends_on:
-      tts:
-        condition: service_started
-    networks:
-      - pipeline
-    logging:
-      driver: "json-file"
+      - redis_data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
-  packaging:
-    build:
-      context: .
-      dockerfile: services/packaging/Dockerfile
+  # Text extraction service - triggered by API
+  ingest:
+    build: ./services/ingest
+    image: audiobook-ingest:latest
+    environment:
+      STORAGE_URL: "http://storage:8001"
+      REDIS_URL: "redis://redis:6379"
+      QUEUE_NAME: "ingest_queue"
     volumes:
-      - audioproc_output:/data/input
-      - packaging_output:/data/output
+      - text_data:/data/text
     depends_on:
-      audioproc:
-        condition: service_started
-    networks:
-      - pipeline
-    logging:
-      driver: "json-file"
+      - storage
+      - redis
+    restart: on-failure
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://storage:8001/health')"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
 
-  uploader:
-    build:
-      context: .
-      dockerfile: services/uploader/Dockerfile
+  # Text segmentation service - triggered by ingest completion
+  segmenter:
+    build: ./services/segmenter
+    image: audiobook-segmenter:latest
+    environment:
+      STORAGE_URL: "http://storage:8001"
+      REDIS_URL: "redis://redis:6379"
+      QUEUE_NAME: "segment_queue"
+      CHUNK_SIZE_CHARS: "800"
     volumes:
-      - packaging_output:/data/input
-      - output_data:/data/output
-      - ./config/docker/.env:/app/.env:ro
+      - text_data:/data/text:ro
     depends_on:
-      packaging:
-        condition: service_started
-    networks:
-      - pipeline
-    logging:
-      driver: "json-file"
+      - storage
+      - redis
+    restart: on-failure
+    healthcheck:
+      test: ["CMD", "python", "-c", "import spacy; spacy.load('en_core_web_sm')"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
 
-networks:
-  pipeline:
-    driver: bridge
+  # TTS processing service - triggered by segmentation completion
+  #  tts-worker:
+  #    build: ./services/tts-worker
+  #    image: audiobook-tts:latest
+  #    runtime: nvidia
+  #    environment:
+  #      NVIDIA_VISIBLE_DEVICES: all
+  #      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+  #      STORAGE_URL: "http://storage:8001"
+  #      REDIS_URL: "redis://redis:6379"
+  #      QUEUE_NAME: "tts_queue"
+  #      MODEL_PATH: "/models/fastpitch_hifigan"
+  #    volumes:
+  #      - wav_data:/data/wav
+  #      - tts_models:/models
+  #    depends_on:
+  #      - storage
+  #      - redis
+  #    restart: on-failure
+  #    healthcheck:
+  #      test: ["CMD", "python", "-c", "import torch; print('GPU available:', torch.cuda.is_available())"]
+  #      interval: 60s
+  #      timeout: 10s
+  #      retries: 3
+
+  # Audio transcoding service - triggered by TTS completion
+  transcoder:
+    build: ./services/transcoder
+    image: audiobook-transcoder:latest
+    environment:
+      STORAGE_URL: "http://storage:8001"
+      REDIS_URL: "redis://redis:6379"
+      QUEUE_NAME: "transcode_queue"
+      SEGMENT_DURATION: "3.14"
+      OPUS_BITRATE: "32k"
+    volumes:
+      - wav_data:/data/wav:ro
+      - segment_data:/data/ogg
+    depends_on:
+      - storage
+      - redis
+    restart: on-failure
+    healthcheck:
+      test: ["CMD", "ffmpeg", "-version"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+
+  # React PWA Client
+  #  client:
+  #    build: ./pwa-client
+  #    image: audiobook-client:latest
+  #    ports:
+  #      - "3000:3000"
+  #    environment:
+  #      API_BASE_URL: "http://localhost:8000"
+  #    depends_on:
+  #      - api
+  #    restart: unless-stopped
 
 volumes:
-  input_data:
-  extraction_output:
-  segmentation_output:
-  tts_output:
-  audioproc_output:
-  packaging_output:
-  output_data: 
+  text_data:
+  wav_data:
+  segment_data:
+  meta_data:
+  redis_data:
+  tts_models:

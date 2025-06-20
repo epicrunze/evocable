@@ -1,0 +1,101 @@
+{
+    "objectives_and_scope": {
+      "goal": "Convert user‐provided PDF, EPUB or TXT into streamed English audiobook audio via a React PWA",
+      "hardware": "Single PC with NVIDIA RTX 3090",
+      "initial_scale": "Up to 10 users, 1–2 concurrent streams",
+      "authentication": "Shared‐secret API key in Authorization: Bearer <API_KEY> header",
+      "retention_policy": "Retain all generated audio chunks indefinitely"
+    },
+    "high_level_architecture": {
+      "client": "React PWA scaffolded with Vite, Service Worker for caching",
+      "api": "FastAPI served by Uvicorn on the RTX 3090 host",
+      "ingest": "Extract raw text from PDF via pdfplumber, EPUB via ebooklib, TXT via direct read with chardet; OCR fallback with Tesseract",
+      "segmenter": "spaCy English sentence tokenizer plus configurable 800-character chunk assembler with SSML (<s> and <break> tags)",
+      "tts_worker": "FastPitch 2 + HiFiGAN inference container on RTX 3090, outputs 24 kHz WAV",
+      "transcoder": "FFmpeg CLI wrapper to convert WAV → Opus@32 kbps in Ogg and segment into 3.14 s files",
+      "storage": "Filesystem hierarchy for raw text, WAV, Ogg segments; metadata in SQLite"
+    },
+    "core_modules": {
+      "api": {
+        "framework": "FastAPI",
+        "server": "Uvicorn",
+        "auth_middleware": "Validate Authorization header against API_KEY"
+      },
+      "ingest": {
+        "pdf_extraction": "pdfplumber",
+        "epub_extraction": "ebooklib + BeautifulSoup",
+        "txt_read": "Python built-in with chardet for encoding detection",
+        "ocr_fallback": "Tesseract"
+      },
+      "segmenter": {
+        "tokenizer": "spaCy English",
+        "chunk_size_chars": 800,
+        "ssml_tags": ["<s>", "<break time=\"200ms\"/>"]
+      },
+      "tts_worker": {
+        "model": "FastPitch 2 for mel spectrogram + HiFiGAN vocoder",
+        "output_format": "WAV 24 kHz 16-bit PCM",
+        "container": "Docker with singleton model load"
+      },
+      "transcoder": {
+        "tool": "FFmpeg",
+        "codec": "libopus@32 kbps",
+        "container_format": "Ogg",
+        "segment_time_s": 3.14,
+        "wrapper": "Python subprocess"
+      },
+      "storage": {
+        "file_system": "Local directories per book_id for text, WAV, Ogg",
+        "metadata_store": "SQLite database mapping book → chunk list and durations"
+      }
+    },
+    "audio_formats_and_delivery": {
+      "intermediate": "WAV 24 kHz 16-bit PCM",
+      "distribution": "Opus in Ogg container at 32 kbps",
+      "segment_duration_s": 3.14,
+      "streaming_protocol": "HTTP GET of /chunks/{seq}"
+    },
+    "rest_api_endpoints": {
+      "submit_book": {
+        "method": "POST",
+        "path": "/api/v1/books",
+        "content_type": "multipart/form-data",
+        "body_fields": ["title", "format", "file or text"],
+        "response": {"book_id": "UUID", "status": "processing"}
+      },
+      "check_status": {
+        "method": "GET",
+        "path": "/api/v1/books/{book_id}/status",
+        "response_fields": ["book_id", "status", "percent_complete", "error_message"]
+      },
+      "list_chunks": {
+        "method": "GET",
+        "path": "/api/v1/books/{book_id}/chunks",
+        "response_fields": ["seq", "duration_s", "url"]
+      },
+      "fetch_chunk": {
+        "method": "GET",
+        "path": "/api/v1/books/{book_id}/chunks/{seq}",
+        "accept": "audio/ogg",
+        "response": "binary Opus data"
+      }
+    },
+    "client_stack": {
+      "framework": "React",
+      "scaffold": "Vite PWA template",
+      "features": [
+        "Upload/select book",
+        "Display processing status",
+        "Playback controls with prefetching",
+        "Offline caching via Service Worker + IndexedDB"
+      ]
+    },
+    "devops_and_next_steps": {
+      "orchestration": "Docker Compose wiring all services on one network with named volumes",
+      "logging": "File‐based logs for each service",
+      "monitoring": "Future Prometheus integration",
+      "ci_cd": "GitHub Actions for linting, unit tests, Docker image builds and PWA deployment"
+    },
+    "technical_justification": "We chose FastAPI/Uvicorn for low-latency async API on Python, pdfplumber/ebooklib/Tesseract for robust text extraction, spaCy for accurate English sentence splitting, FastPitch+HiFiGAN on RTX 3090 for production-grade TTS, FFmpeg+Opus for minimal bandwidth streaming, SQLite for lightweight metadata, React/Vite for a modern PWA scaffold, and Docker Compose for simple local orchestration. Each tool balances ease of development, performance, and future extensibility."
+  }
+  
