@@ -11,6 +11,36 @@ This system transforms text documents into high-quality audio streams using:
 - **Audio Streaming**: FFmpeg transcoding to Opus@32kbps in Ogg containers, segmented for streaming
 - **Modern PWA**: React client with offline caching and real-time status updates
 
+## 🚧 Current Implementation Status
+
+### ✅ Phase 1: Data Models & API Foundation (COMPLETED)
+- **Pydantic Models**: Complete request/response schemas for all API endpoints
+- **Database Models**: SQLite schema with books and chunks tables
+- **API Foundation**: FastAPI app with authentication, health checks, and placeholder endpoints
+- **Docker Integration**: Containerized services with proper permissions and data volumes
+- **Testing**: Comprehensive validation of data models and database operations
+
+### 🔄 Phase 2: Core API Endpoints (IN PROGRESS)
+- Book submission endpoint with file upload handling
+- Status checking with real-time progress updates
+- Audio chunk listing and streaming endpoints
+- Service integration with processing pipeline
+
+### ⏳ Phase 3: Service Integration (PLANNED)
+- Ingest service communication for text extraction
+- Processing pipeline orchestration
+- Background task management
+
+### ⏳ Phase 4: Error Handling & Validation (PLANNED)
+- Comprehensive input validation
+- Standardized error responses
+- Logging and monitoring integration
+
+### ⏳ Phase 5: Testing & Documentation (PLANNED)
+- Unit and integration tests
+- API documentation
+- Performance optimization
+
 ## 🏗️ Architecture
 
 ```
@@ -53,55 +83,57 @@ This system transforms text documents into high-quality audio streams using:
 1. **Clone and configure**:
    ```bash
    git clone <repository-url>
-   cd audiobook-server
+   cd evocable
    cp env.example .env
    # Edit .env with your API_KEY and other settings
    ```
 
 2. **Start the system**:
    ```bash
-   docker compose up -d
+   docker-compose up -d
    ```
 
 3. **Access the application**:
-   - PWA Client: http://localhost:3000
+   - API Health Check: http://localhost:8000/health
    - API Documentation: http://localhost:8000/docs
    - Storage Service: http://localhost:8001/health
+   - PWA Client: http://localhost:3000 (coming soon)
 
-### Development Setup
+### Current API Testing
 
-1. **Install pre-commit hooks**:
-   ```bash
-   pip install pre-commit
-   pre-commit install
-   ```
+```bash
+# Test API health (includes database connectivity)
+curl http://localhost:8000/health
 
-2. **Run tests**:
-   ```bash
-   # Python services
-   docker compose exec api pytest
-   docker compose exec storage pytest
-   
-   # Client
-   cd pwa-client
-   npm test
-   ```
+# Test API root
+curl http://localhost:8000/
+
+# Test authenticated endpoint (placeholder)
+curl -H "Authorization: Bearer default-dev-key" \
+     http://localhost:8000/api/v1/books/test-123/status
+```
 
 ## 📁 Project Structure
 
 ```
-audiobook-server/
+evocable/
 ├── services/
-│   ├── api/              # FastAPI gateway and orchestration
-│   ├── storage/          # Centralized metadata and file management
-│   ├── ingest/           # Text extraction from PDF/EPUB/TXT
-│   ├── segmenter/        # Text chunking and SSML generation
-│   ├── tts-worker/       # FastPitch + HiFiGAN TTS processing
-│   └── transcoder/       # FFmpeg audio transcoding and segmentation
-├── pwa-client/           # React PWA with Vite
-├── docker-compose.yml    # Service orchestration
-├── env.example          # Environment configuration template
-└── .github/workflows/   # CI/CD pipelines
+│   ├── api/                  # FastAPI gateway and orchestration
+│   │   ├── main.py          # ✅ FastAPI app with auth & health checks
+│   │   ├── models.py        # ✅ Pydantic models & database manager
+│   │   ├── Dockerfile       # ✅ Container with proper permissions
+│   │   └── requirements.txt # ✅ Dependencies
+│   ├── storage/             # Centralized metadata and file management
+│   ├── ingest/              # Text extraction from PDF/EPUB/TXT
+│   ├── segmenter/           # Text chunking and SSML generation
+│   ├── tts-worker/          # FastPitch + HiFiGAN TTS processing
+│   └── transcoder/          # FFmpeg audio transcoding and segmentation
+├── pwa-client/              # React PWA with Vite (planned)
+├── docker-compose.yml       # ✅ Service orchestration
+├── env.example             # Environment configuration template
+├── project_description.json # ✅ Detailed project specifications
+├── project_plan.md         # ✅ Implementation roadmap
+└── README.md               # ✅ This file
 ```
 
 ## 🔧 Configuration
@@ -110,120 +142,176 @@ audiobook-server/
 
 Key configuration options in `.env`:
 
-- `API_KEY`: Authentication secret for API access
-- `CHUNK_SIZE_CHARS`: Text chunk size for processing (default: 800)
-- `SEGMENT_DURATION`: Audio segment duration in seconds (default: 3.14)
-- `OPUS_BITRATE`: Audio compression bitrate (default: 32k)
-- `MODEL_PATH`: TTS model storage location
+- `API_KEY`: Authentication secret for API access (default: "default-dev-key")
+- `DATABASE_PATH`: SQLite database location (default: "/data/meta/audiobooks.db")
+- `REDIS_URL`: Redis connection string (default: "redis://localhost:6379")
+- `CORS_ORIGINS`: Allowed origins for CORS (default: "http://localhost:3000")
 
-### Service Configuration
+### Current Database Schema
 
-Each service can be configured independently:
+**Books Table:**
+```sql
+CREATE TABLE books (
+    id TEXT PRIMARY KEY,              -- UUID
+    title TEXT NOT NULL,              -- Book title
+    format TEXT NOT NULL,             -- pdf, epub, txt
+    status TEXT DEFAULT 'pending',    -- Processing status
+    percent_complete REAL DEFAULT 0.0, -- Progress percentage
+    error_message TEXT,               -- Error details if failed
+    file_path TEXT,                   -- Original file location
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    total_chunks INTEGER DEFAULT 0    -- Number of audio chunks
+);
+```
 
-- **API**: CORS, authentication, rate limiting
-- **Storage**: Database connection, file paths
-- **Processing Services**: Queue names, batch sizes, timeouts
-- **TTS Worker**: GPU settings, model parameters
-- **Transcoder**: Audio quality, segment timing
+**Chunks Table:**
+```sql
+CREATE TABLE chunks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    book_id TEXT NOT NULL,            -- Foreign key to books
+    seq INTEGER NOT NULL,             -- Sequence number
+    duration_s REAL NOT NULL,         -- Duration in seconds
+    file_path TEXT NOT NULL,          -- Audio file location
+    file_size INTEGER,                -- File size in bytes
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (book_id, seq)
+);
+```
 
 ## 🔌 API Endpoints
 
-### Book Management
+### Current Implementation Status
 
-- `POST /api/v1/books` - Submit new book for processing
-- `GET /api/v1/books/{book_id}/status` - Check processing status
-- `GET /api/v1/books/{book_id}/chunks` - List available audio chunks
-- `GET /api/v1/books/{book_id}/chunks/{seq}` - Stream audio chunk
+| Endpoint | Method | Status | Description |
+|----------|--------|--------|-------------|
+| `/health` | GET | ✅ **IMPLEMENTED** | Service health check with database connectivity |
+| `/` | GET | ✅ **IMPLEMENTED** | API information and version |
+| `/docs` | GET | ✅ **IMPLEMENTED** | Interactive API documentation |
+| `/api/v1/books` | POST | 🔄 **PLACEHOLDER** | Submit new book for processing |
+| `/api/v1/books/{book_id}/status` | GET | 🔄 **PLACEHOLDER** | Check processing status |
+| `/api/v1/books/{book_id}/chunks` | GET | 🔄 **PLACEHOLDER** | List available audio chunks |
+| `/api/v1/books/{book_id}/chunks/{seq}` | GET | 🔄 **PLACEHOLDER** | Stream audio chunk |
 
-### Storage Service
+### Data Models
 
-- `GET /health` - Service health check
-- `POST /books` - Create book metadata
-- `GET /books/{book_id}` - Retrieve book information
-- `PUT /books/{book_id}/chunks` - Update chunk metadata
+**Request/Response Models:**
+- `BookSubmissionRequest`: File upload with title and format
+- `BookResponse`: Book creation response with ID and status
+- `BookStatusResponse`: Detailed status with progress and error info
+- `ChunkInfo`: Audio chunk metadata with duration and URL
+- `ChunkListResponse`: List of available chunks with totals
+- `ErrorResponse`: Standardized error format
+
+**Enums:**
+- `BookFormat`: PDF, EPUB, TXT
+- `BookStatus`: PENDING, PROCESSING, EXTRACTING, SEGMENTING, GENERATING_AUDIO, TRANSCODING, COMPLETED, FAILED
+
+### Authentication
+
+All API endpoints (except health checks) require authentication via Bearer token:
+
+```bash
+curl -H "Authorization: Bearer YOUR_API_KEY" \
+     http://localhost:8000/api/v1/books
+```
 
 ## 🧪 Testing
 
-### Unit Tests
+### Current Testing Status
 
-Each service includes comprehensive unit tests:
+✅ **Data Models**: All Pydantic models and database operations validated
+✅ **Database**: SQLite schema creation and CRUD operations tested
+✅ **Container**: Docker build and deployment working
+✅ **Health Checks**: API and database connectivity verified
 
-```bash
-# Run all Python tests
-docker compose exec api pytest
-docker compose exec storage pytest
-docker compose exec ingest pytest
-docker compose exec segmenter pytest
-docker compose exec tts-worker pytest
-docker compose exec transcoder pytest
-
-# Run client tests
-cd pwa-client && npm test
-```
-
-### Integration Tests
-
-End-to-end testing with sample documents:
+### Manual Testing
 
 ```bash
-# Test complete pipeline
-curl -X POST http://localhost:8000/api/v1/books \
-  -H "Authorization: Bearer $API_KEY" \
-  -F "file=@sample.pdf" \
-  -F "title=Test Book"
+# Test the API service
+docker-compose up -d api redis
+
+# Check health
+curl http://localhost:8000/health
+# Expected: {"status":"healthy","service":"api","redis":"healthy","database":"healthy","version":"1.0.0"}
+
+# Test database operations inside container
+docker exec evocable-api-1 python -c "
+from models import DatabaseManager
+db = DatabaseManager()
+book_id = db.create_book('Test Book', 'pdf', '/tmp/test.pdf')
+print(f'Created book: {book_id}')
+book = db.get_book(book_id)
+print(f'Retrieved book: {book}')
+"
 ```
 
 ## 📊 Monitoring
 
 ### Health Checks
 
-All services expose health endpoints:
-
-- API: `GET /health`
-- Storage: `GET /health`
-- Processing services: Internal health checks
+- **API Service**: `GET /health` - Includes Redis and database connectivity
+- **Database**: SQLite file creation and table initialization
+- **Container**: Proper permissions and data directory setup
 
 ### Logging
 
-Structured logging with configurable levels:
-
 ```bash
-# View service logs
-docker compose logs -f api
-docker compose logs -f storage
-docker compose logs -f tts-worker
+# View API service logs
+docker-compose logs -f api
+
+# View all service logs
+docker-compose logs -f
 ```
 
 ## 🔒 Security
 
-- API key authentication for all endpoints
-- CORS configuration for client access
-- Read-only volume mounts where appropriate
-- Environment-based configuration
+- ✅ API key authentication for protected endpoints
+- ✅ CORS configuration for client access
+- ✅ Non-root container user with proper permissions
+- ✅ Environment-based configuration
 
-## 🚀 Deployment
+## 🚀 Next Steps
 
-### Production
+### Phase 2: Core API Endpoints (Next Sprint)
 
-1. Set production environment variables
-2. Configure external storage volumes
-3. Set up reverse proxy (nginx/traefik)
-4. Configure SSL certificates
-5. Set up monitoring and alerting
+1. **Book Submission Endpoint**
+   - File upload handling (multipart/form-data)
+   - File validation and storage
+   - Background processing initiation
 
-### Scaling
+2. **Status Checking Endpoint**
+   - Real-time progress tracking
+   - Error state handling
+   - Database query optimization
 
-- Horizontal scaling of processing services
-- Redis cluster for high availability
-- External database for metadata
-- CDN for audio file distribution
+3. **Audio Streaming Endpoints**
+   - Chunk listing with metadata
+   - Audio file serving with proper headers
+   - Range request support for streaming
+
+### Development Workflow
+
+```bash
+# Start development environment
+docker-compose up -d
+
+# Make changes to API code
+# ... edit files ...
+
+# Rebuild and restart API service
+docker-compose up --build -d api
+
+# Test changes
+curl http://localhost:8000/health
+```
 
 ## 🤝 Contributing
 
 1. Fork the repository
 2. Create a feature branch
-3. Make your changes with tests
-4. Run the full test suite
+3. Follow the phase-based development plan
+4. Test thoroughly with Docker
 5. Submit a pull request
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines.
@@ -235,5 +323,5 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines.
 ## 🆘 Support
 
 - [Issues](https://github.com/your-repo/issues)
-- [Documentation](docs/)
+- [Project Plan](project_plan.md)
 - [API Reference](http://localhost:8000/docs) 

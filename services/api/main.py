@@ -9,6 +9,17 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import redis
 import httpx
 
+# Import our data models
+from models import (
+    DatabaseManager, 
+    BookSubmissionRequest, 
+    BookResponse, 
+    BookStatusResponse,
+    ChunkListResponse,
+    ErrorResponse,
+    BookStatus
+)
+
 # Security
 security = HTTPBearer()
 
@@ -37,6 +48,11 @@ redis_client = redis.Redis.from_url(
 # HTTP client for service communication
 http_client = httpx.AsyncClient()
 
+# Database manager
+db_manager = DatabaseManager(
+    db_path=os.getenv("DATABASE_PATH", "/data/meta/audiobooks.db")
+)
+
 
 def verify_api_key(credentials: HTTPAuthorizationCredentials = Depends(security)) -> str:
     """Verify API key from Authorization header."""
@@ -59,10 +75,18 @@ async def health_check() -> Dict[str, Any]:
     except Exception as e:
         redis_status = f"unhealthy: {str(e)}"
     
+    try:
+        # Check database connection
+        test_book = db_manager.get_book("test-health-check")
+        db_status = "healthy"
+    except Exception as e:
+        db_status = f"unhealthy: {str(e)}"
+    
     return {
         "status": "healthy",
         "service": "api",
         "redis": redis_status,
+        "database": db_status,
         "version": "1.0.0"
     }
 
@@ -75,6 +99,45 @@ async def root() -> Dict[str, str]:
         "version": "1.0.0",
         "docs": "/docs"
     }
+
+
+# Placeholder endpoints for Phase 2 implementation
+# These will be implemented in the next phase
+
+@app.post("/api/v1/books", response_model=BookResponse, status_code=status.HTTP_201_CREATED)
+async def submit_book():
+    """Submit a book for processing - TO BE IMPLEMENTED."""
+    raise HTTPException(
+        status_code=status.HTTP_501_NOT_IMPLEMENTED,
+        detail="Endpoint not yet implemented"
+    )
+
+
+@app.get("/api/v1/books/{book_id}/status", response_model=BookStatusResponse)
+async def get_book_status(book_id: str):
+    """Get book processing status - TO BE IMPLEMENTED."""
+    raise HTTPException(
+        status_code=status.HTTP_501_NOT_IMPLEMENTED,
+        detail="Endpoint not yet implemented"
+    )
+
+
+@app.get("/api/v1/books/{book_id}/chunks", response_model=ChunkListResponse)
+async def list_book_chunks(book_id: str):
+    """List available audio chunks for a book - TO BE IMPLEMENTED."""
+    raise HTTPException(
+        status_code=status.HTTP_501_NOT_IMPLEMENTED,
+        detail="Endpoint not yet implemented"
+    )
+
+
+@app.get("/api/v1/books/{book_id}/chunks/{seq}")
+async def get_audio_chunk(book_id: str, seq: int):
+    """Stream an audio chunk - TO BE IMPLEMENTED."""
+    raise HTTPException(
+        status_code=status.HTTP_501_NOT_IMPLEMENTED,
+        detail="Endpoint not yet implemented"
+    )
 
 
 if __name__ == "__main__":

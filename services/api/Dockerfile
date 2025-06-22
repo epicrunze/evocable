@@ -15,9 +15,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY . .
 
-# Create non-root user
-RUN useradd --create-home --shell /bin/bash app \
-    && chown -R app:app /app
+# Create data directory and non-root user
+RUN mkdir -p /data/meta /data/text /data/wav /data/ogg \
+    && useradd --create-home --shell /bin/bash app \
+    && chown -R app:app /app /data
 USER app
 
 # Health check
