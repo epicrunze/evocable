@@ -248,10 +248,39 @@ class AudioTranscoder:
     async def _update_chunk_metadata(self, book_id: str, chunks: List[Dict[str, Any]]):
         """Update the storage service with transcoded chunk metadata."""
         try:
-            # For now, we'll save metadata locally
-            # In a production system, this would be an API call to storage service
-            metadata_file = self.ogg_data_path / book_id / "metadata.json"
+            # Call storage service API to store audio chunks
+            chunk_data = {
+                "chunks": [
+                    {
+                        "seq": chunk["seq"],
+                        "duration_s": chunk["duration_s"],
+                        "file_path": chunk["file_path"],
+                        "file_size": chunk["file_size"],
+                        "format": chunk["format"],
+                        "container": chunk["container"],
+                        "bitrate": chunk["bitrate"]
+                    }
+                    for chunk in chunks
+                ]
+            }
             
+            url = f"{self.storage_url}/books/{book_id}/audio-chunks"
+            logger.info(f"DEBUG: Making POST request to {url}")
+            logger.info(f"DEBUG: Payload contains {len(chunk_data['chunks'])} chunks")
+            
+            response = await self.http_client.post(url, json=chunk_data)
+            
+            logger.info(f"DEBUG: Response status: {response.status_code}")
+            logger.info(f"DEBUG: Response text: {response.text}")
+            
+            if response.status_code == 200:
+                logger.info(f"Successfully updated storage service with {len(chunks)} audio chunks for book {book_id}")
+            else:
+                logger.error(f"Failed to update storage service: {response.status_code} - {response.text}")
+                raise Exception(f"Storage service returned {response.status_code}")
+            
+            # Also save metadata file locally for backup
+            metadata_file = self.ogg_data_path / book_id / "metadata.json"
             with open(metadata_file, 'w') as f:
                 json.dump(chunks, f, indent=2)
             

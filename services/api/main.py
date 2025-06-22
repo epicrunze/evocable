@@ -300,30 +300,45 @@ async def list_book_chunks(
                 detail=f"Book with ID {book_id} not found"
             )
         
-        # Get chunks from database
-        chunks_data = db_manager.get_chunks(book_id)
-        
-        # Convert to response format
-        chunks = []
-        total_duration = 0.0
-        
-        for chunk_data in chunks_data:
-            chunk_url = f"/api/v1/books/{book_id}/chunks/{chunk_data['seq']}"
-            chunk_info = ChunkInfo(
-                seq=chunk_data["seq"],
-                duration_s=chunk_data["duration_s"],
-                url=chunk_url,
-                file_size=chunk_data.get("file_size")
+        # Get chunks from storage service
+        storage_url = os.getenv("STORAGE_URL", "http://storage:8001")
+        async with httpx.AsyncClient() as client:
+            response = await client.get(f"{storage_url}/books/{book_id}/audio-chunks")
+            
+            if response.status_code == 404:
+                # No chunks found
+                return ChunkListResponse(
+                    book_id=book_id,
+                    total_chunks=0,
+                    total_duration_s=0.0,
+                    chunks=[]
+                )
+            elif response.status_code != 200:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Failed to get chunks from storage service: {response.status_code}"
+                )
+            
+            storage_data = response.json()
+            
+            # Convert to API response format
+            chunks = []
+            for chunk_data in storage_data.get("chunks", []):
+                chunk_url = f"/api/v1/books/{book_id}/chunks/{chunk_data['seq']}"
+                chunk_info = ChunkInfo(
+                    seq=chunk_data["seq"],
+                    duration_s=chunk_data["duration_s"],
+                    url=chunk_url,
+                    file_size=chunk_data.get("file_size")
+                )
+                chunks.append(chunk_info)
+            
+            return ChunkListResponse(
+                book_id=book_id,
+                total_chunks=storage_data.get("total_chunks", 0),
+                total_duration_s=storage_data.get("total_duration_s", 0.0),
+                chunks=chunks
             )
-            chunks.append(chunk_info)
-            total_duration += chunk_data["duration_s"]
-        
-        return ChunkListResponse(
-            book_id=book_id,
-            total_chunks=len(chunks),
-            total_duration_s=total_duration,
-            chunks=chunks
-        )
         
     except HTTPException:
         raise
@@ -350,28 +365,47 @@ async def get_audio_chunk(
                 detail=f"Book with ID {book_id} not found"
             )
         
-        # Get specific chunk
-        chunk = db_manager.get_chunk(book_id, seq)
-        if not chunk:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Chunk {seq} not found for book {book_id}"
+        # Get chunk information from storage service
+        storage_url = os.getenv("STORAGE_URL", "http://storage:8001")
+        async with httpx.AsyncClient() as client:
+            response = await client.get(f"{storage_url}/books/{book_id}/audio-chunks")
+            
+            if response.status_code != 200:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"No chunks found for book {book_id}"
+                )
+            
+            storage_data = response.json()
+            chunks = storage_data.get("chunks", [])
+            
+            # Find the specific chunk
+            chunk = None
+            for chunk_data in chunks:
+                if chunk_data["seq"] == seq:
+                    chunk = chunk_data
+                    break
+            
+            if not chunk:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Chunk {seq} not found for book {book_id}"
+                )
+            
+            # Check if audio file exists
+            audio_file_path = Path(chunk["file_path"])
+            if not audio_file_path.exists():
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Audio file not found: {chunk['file_path']}"
+                )
+            
+            # Return file response
+            return FileResponse(
+                path=str(audio_file_path),
+                media_type="audio/ogg",
+                filename=f"chunk_{seq:06d}.ogg"
             )
-        
-        # Check if audio file exists
-        audio_file_path = Path(chunk["file_path"])
-        if not audio_file_path.exists():
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Audio file not found: {chunk['file_path']}"
-            )
-        
-        # Return file response
-        return FileResponse(
-            path=str(audio_file_path),
-            media_type="audio/ogg",
-            filename=f"chunk_{seq:03d}.ogg"
-        )
         
     except HTTPException:
         raise
@@ -380,6 +414,71 @@ async def get_audio_chunk(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to stream audio chunk: {str(e)}"
         )
+
+
+@app.get("/debug/books/{book_id}/chunks")
+async def debug_book_chunks(book_id: str):
+    """Debug endpoint to see what's happening with chunks."""
+    try:
+        print(f"DEBUG: Getting chunks for book {book_id}")
+        
+        # Check if book exists
+        book = db_manager.get_book(book_id)
+        print(f"DEBUG: Book found: {book is not None}")
+        if not book:
+            return {"error": "Book not found"}
+        
+        # Get chunks from storage service
+        storage_url = os.getenv("STORAGE_URL", "http://storage:8001")
+        print(f"DEBUG: Storage URL: {storage_url}")
+        
+        async with httpx.AsyncClient() as client:
+            url = f"{storage_url}/books/{book_id}/audio-chunks"
+            print(f"DEBUG: Calling URL: {url}")
+            
+            response = await client.get(url)
+            print(f"DEBUG: Response status: {response.status_code}")
+            print(f"DEBUG: Response text length: {len(response.text)}")
+            
+            if response.status_code == 404:
+                print("DEBUG: Storage returned 404")
+                return {"status": "404", "message": "No chunks found"}
+            elif response.status_code != 200:
+                print(f"DEBUG: Storage returned error: {response.status_code}")
+                return {"status": response.status_code, "error": "Storage service error"}
+            
+            storage_data = response.json()
+            print(f"DEBUG: Storage data keys: {list(storage_data.keys())}")
+            print(f"DEBUG: Total chunks from storage: {storage_data.get('total_chunks', 0)}")
+            print(f"DEBUG: Chunks array length: {len(storage_data.get('chunks', []))}")
+            
+            # Convert to API response format
+            chunks = []
+            for chunk_data in storage_data.get("chunks", []):
+                chunk_url = f"/api/v1/books/{book_id}/chunks/{chunk_data['seq']}"
+                chunk_info = {
+                    "seq": chunk_data["seq"],
+                    "duration_s": chunk_data["duration_s"],
+                    "url": chunk_url,
+                    "file_size": chunk_data.get("file_size")
+                }
+                chunks.append(chunk_info)
+            
+            result = {
+                "book_id": book_id,
+                "total_chunks": storage_data.get("total_chunks", 0),
+                "total_duration_s": storage_data.get("total_duration_s", 0.0),
+                "chunks": chunks
+            }
+            
+            print(f"DEBUG: Final result total_chunks: {result['total_chunks']}")
+            print(f"DEBUG: Final result chunks length: {len(result['chunks'])}")
+            
+            return result
+        
+    except Exception as e:
+        print(f"DEBUG: Exception occurred: {str(e)}")
+        return {"error": str(e)}
 
 
 if __name__ == "__main__":

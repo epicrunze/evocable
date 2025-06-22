@@ -32,6 +32,18 @@ class ChunkData(BaseModel):
 class ChunksData(BaseModel):
     chunks: list[ChunkData]
 
+class AudioChunkData(BaseModel):
+    seq: int
+    duration_s: float
+    file_path: str
+    file_size: int
+    format: str = "opus"
+    container: str = "ogg"
+    bitrate: str = "32k"
+
+class AudioChunksData(BaseModel):
+    chunks: list[AudioChunkData]
+
 # Database setup
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///:memory:")
 # Only create directories for file-based databases
@@ -211,6 +223,78 @@ async def store_book_chunks(book_id: str, chunks_data: ChunksData) -> Dict[str, 
         return {"message": f"Stored {len(chunks_data.chunks)} chunks for book {book_id}"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to store chunks: {str(e)}")
+
+
+@app.post("/books/{book_id}/audio-chunks")
+async def store_audio_chunks(book_id: str, audio_chunks_data: AudioChunksData) -> Dict[str, str]:
+    """Store streaming audio chunk metadata for a book."""
+    try:
+        # Store chunk metadata in database
+        db = SessionLocal()
+        try:
+            # Clear existing chunks for this book
+            db.query(Chunk).filter(Chunk.book_id == book_id).delete()
+            
+            # Add new chunks
+            for chunk_data in audio_chunks_data.chunks:
+                chunk = Chunk(
+                    book_id=book_id,
+                    sequence=chunk_data.seq,
+                    duration=int(chunk_data.duration_s * 1000),  # Convert to milliseconds
+                    file_path=chunk_data.file_path
+                )
+                db.add(chunk)
+            
+            db.commit()
+            
+            # Update book status
+            book = db.query(Book).filter(Book.id == book_id).first()
+            if book:
+                book.status = "completed"
+                db.commit()
+                
+        finally:
+            db.close()
+        
+        return {"message": f"Stored {len(audio_chunks_data.chunks)} audio chunks for book {book_id}"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to store audio chunks: {str(e)}")
+
+
+@app.get("/books/{book_id}/audio-chunks")
+async def get_audio_chunks(book_id: str) -> Dict[str, Any]:
+    """Get streaming audio chunks for a book."""
+    try:
+        db = SessionLocal()
+        try:
+            chunks = db.query(Chunk).filter(Chunk.book_id == book_id).order_by(Chunk.sequence).all()
+            
+            chunk_list = []
+            total_duration = 0.0
+            
+            for chunk in chunks:
+                duration_s = chunk.duration / 1000.0  # Convert from milliseconds
+                chunk_info = {
+                    "seq": chunk.sequence,
+                    "duration_s": duration_s,
+                    "file_path": chunk.file_path,
+                    "url": f"/books/{book_id}/chunks/{chunk.sequence}"
+                }
+                chunk_list.append(chunk_info)
+                total_duration += duration_s
+            
+            return {
+                "book_id": book_id,
+                "total_chunks": len(chunk_list),
+                "total_duration_s": total_duration,
+                "chunks": chunk_list
+            }
+            
+        finally:
+            db.close()
+            
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get audio chunks: {str(e)}")
 
 
 if __name__ == "__main__":
