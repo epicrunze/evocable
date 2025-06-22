@@ -23,6 +23,15 @@ app = FastAPI(
 class TextData(BaseModel):
     text: str
 
+class ChunkData(BaseModel):
+    seq: int
+    text: str
+    ssml: str
+    char_count: int
+
+class ChunksData(BaseModel):
+    chunks: list[ChunkData]
+
 # Database setup
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///:memory:")
 # Only create directories for file-based databases
@@ -148,6 +157,60 @@ async def store_book_text(book_id: str, text_data: TextData) -> Dict[str, str]:
         return {"message": f"Text stored for book {book_id}"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to store text: {str(e)}")
+
+
+@app.get("/books/{book_id}/text")
+async def get_book_text(book_id: str) -> Dict[str, str]:
+    """Get extracted text for a book."""
+    try:
+        text_path = Path(os.getenv("TEXT_DATA_PATH", "/data/text"))
+        book_text_file = text_path / f"{book_id}.txt"
+        
+        if not book_text_file.exists():
+            raise HTTPException(status_code=404, detail=f"Text not found for book {book_id}")
+        
+        with open(book_text_file, 'r', encoding='utf-8') as f:
+            text = f.read()
+        
+        return {"text": text}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get text: {str(e)}")
+
+
+@app.post("/books/{book_id}/chunks")
+async def store_book_chunks(book_id: str, chunks_data: ChunksData) -> Dict[str, str]:
+    """Store SSML chunks for a book."""
+    try:
+        text_path = Path(os.getenv("TEXT_DATA_PATH", "/data/text"))
+        text_path.mkdir(parents=True, exist_ok=True)
+        
+        # Create book-specific directory for chunks
+        book_chunks_dir = text_path / book_id / "chunks"
+        book_chunks_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Store each chunk as a separate SSML file
+        for chunk in chunks_data.chunks:
+            chunk_file = book_chunks_dir / f"chunk_{chunk.seq:03d}.ssml"
+            with open(chunk_file, 'w', encoding='utf-8') as f:
+                f.write(chunk.ssml)
+            
+            # Also store metadata
+            metadata_file = book_chunks_dir / f"chunk_{chunk.seq:03d}.json"
+            import json
+            metadata = {
+                "seq": chunk.seq,
+                "text": chunk.text,
+                "char_count": chunk.char_count,
+                "ssml_path": str(chunk_file)
+            }
+            with open(metadata_file, 'w', encoding='utf-8') as f:
+                json.dump(metadata, f, indent=2)
+        
+        return {"message": f"Stored {len(chunks_data.chunks)} chunks for book {book_id}"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to store chunks: {str(e)}")
 
 
 if __name__ == "__main__":

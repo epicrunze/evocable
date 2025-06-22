@@ -169,7 +169,14 @@ class TextExtractor:
     async def _trigger_segmentation(self, book_id: BookId) -> None:
         """Trigger segmentation service via Redis queue."""
         try:
-            self.redis_client.lpush("segment_queue", book_id)
+            import json
+            task_data = {
+                "book_id": book_id,
+                "action": "segment_text"
+            }
+            task_json = json.dumps(task_data)
+            logger.info(f"Sending to segment_queue: {task_json}")
+            self.redis_client.lpush("segment_queue", task_json)
             logger.info(f"Triggered segmentation for book {book_id}")
         except Exception as e:
             logger.error(f"Failed to trigger segmentation for book {book_id}: {e}")

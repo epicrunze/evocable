@@ -1,0 +1,7 @@
+This is the first sentence of our test audiobook. It contains multiple sentences to test the segmentation functionality. The segmenter should break this text into appropriate chunks.
+
+Here is a second paragraph with more content. Each paragraph should be processed correctly by the spaCy sentence tokenizer. The system should generate proper SSML markup for each sentence.
+
+This third paragraph tests edge cases. It has shorter sentences. Some are very brief. Others are much longer and contain multiple clauses that should still be kept together in the same sentence boundary according to the spaCy natural language processing model.
+
+The final paragraph ensures we have enough content to create multiple chunks. This will help us verify that the 800-character limit is working correctly. We want to see how the segmenter handles chunk boundaries and ensures that sentences are not broken in the middle.
