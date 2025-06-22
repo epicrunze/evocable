@@ -10,7 +10,9 @@ services:
       STORAGE_URL: "http://storage:8001"
       REDIS_URL: "redis://redis:6379"
     volumes:
+      - text_data:/data/text  # Shared text storage for processing pipeline
       - segment_data:/data/ogg:ro  # Read-only access to serve audio chunks
+      - meta_data:/data/meta  # Database and metadata storage
     depends_on:
       - storage
       - redis

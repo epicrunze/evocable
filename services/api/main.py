@@ -2,10 +2,12 @@
 
 import os
 import sqlite3
+import asyncio
 from pathlib import Path
 from typing import Dict, Any
+from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Depends, status, Form, File, UploadFile
+from fastapi import FastAPI, HTTPException, Depends, status, Form, File, UploadFile, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -25,14 +27,50 @@ from models import (
     BookFormat
 )
 
+# Import background task processing
+from background_tasks import pipeline
+
 # Security
 security = HTTPBearer()
+
+# Background task for monitoring pipeline
+pipeline_monitor_task = None
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Manage application lifespan - startup and shutdown."""
+    global pipeline_monitor_task
+    
+    # Startup
+    print("Starting Audiobook API service...")
+    
+    # Start background pipeline monitoring
+    pipeline_monitor_task = asyncio.create_task(pipeline.monitor_progress())
+    print("Background pipeline monitoring started")
+    
+    yield
+    
+    # Shutdown
+    print("Shutting down Audiobook API service...")
+    
+    # Cancel background tasks
+    if pipeline_monitor_task:
+        pipeline_monitor_task.cancel()
+        try:
+            await pipeline_monitor_task
+        except asyncio.CancelledError:
+            pass
+    
+    # Cleanup pipeline resources
+    await pipeline.cleanup()
+    print("Shutdown complete")
 
 # Initialize FastAPI app
 app = FastAPI(
     title="Audiobook Server API",
     description="Convert PDF, EPUB, and TXT files to streaming audiobooks",
     version="1.0.0",
+    lifespan=lifespan
 )
 
 # CORS middleware
@@ -87,11 +125,15 @@ async def health_check() -> Dict[str, Any]:
     except Exception as e:
         db_status = f"unhealthy: {str(e)}"
     
+    # Check pipeline status
+    pipeline_status = await pipeline.health_check()
+    
     return {
         "status": "healthy",
         "service": "api",
         "redis": redis_status,
         "database": db_status,
+        "pipeline": pipeline_status,
         "version": "1.0.0"
     }
 
@@ -181,8 +223,8 @@ async def submit_book(
             )
             conn.commit()
         
-        # TODO: Trigger ingest service (Phase 3)
-        # For now, we'll just mark it as pending
+        # Trigger processing pipeline in the background
+        asyncio.create_task(pipeline.start_processing(book_id, str(file_path)))
         
         return BookResponse(
             book_id=book_id,

@@ -198,6 +198,67 @@ class TextExtractor:
         }
 
 
+async def process_ingest_queue(extractor: TextExtractor):
+    """Process the ingest queue continuously."""
+    logger.info("Starting ingest queue processing")
+    
+    while True:
+        try:
+            # Check for new tasks in the queue
+            task_data = extractor.redis_client.brpop("ingest_queue", timeout=30)
+            
+            if task_data:
+                queue_name, task_json = task_data
+                logger.info(f"Processing ingest task: {task_json}")
+                
+                try:
+                    import json
+                    task = json.loads(task_json)  # Parse the task data
+                    book_id = task.get("book_id")
+                    file_path = task.get("file_path")
+                    
+                    if book_id and file_path:
+                        # Extract text from the file
+                        result = await extractor.extract_text(file_path, book_id)
+                        
+                        # Send completion notification
+                        completion_data = {
+                            "book_id": book_id,
+                            "success": result.success,
+                            "error": result.error
+                        }
+                        
+                        extractor.redis_client.lpush(
+                            "ingest_completed", 
+                            json.dumps(completion_data)
+                        )
+                        
+                        if result.success:
+                            logger.info(f"Successfully processed book {book_id}")
+                        else:
+                            logger.error(f"Failed to process book {book_id}: {result.error}")
+                    
+                except Exception as e:
+                    logger.error(f"Error processing ingest task: {e}")
+                    # Send failure notification
+                    try:
+                        completion_data = {
+                            "book_id": task.get("book_id", "unknown"),
+                            "success": False,
+                            "error": str(e)
+                        }
+                        extractor.redis_client.lpush(
+                            "ingest_completed", 
+                            json.dumps(completion_data)
+                        )
+                    except:
+                        pass
+        
+        except Exception as e:
+            logger.error(f"Error in ingest queue processing: {e}")
+            await asyncio.sleep(10)  # Wait before retrying
+
+
 async def main():
     """Main function for the ingest service."""
     logger.info("Starting Audiobook Ingest Service")
@@ -212,15 +273,10 @@ async def main():
     health = await extractor.health_check()
     logger.info(f"Health status: {health}")
     
-    # TODO: Implement queue processing loop
-    # This would listen to Redis queue for new book processing requests
-    # For now, this is a placeholder for the service structure
-    
     logger.info("Ingest service ready")
     
-    # Keep the service running
-    while True:
-        await asyncio.sleep(60)  # Health check every minute
+    # Start queue processing
+    await process_ingest_queue(extractor)
 
 
 if __name__ == "__main__":
