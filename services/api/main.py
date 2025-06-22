@@ -270,13 +270,31 @@ async def get_book_status(
                 detail=f"Book with ID {book_id} not found"
             )
         
-        # Get total chunks if completed
+        # Get total chunks from storage service if completed
         total_chunks = None
         if book["status"] == BookStatus.COMPLETED.value:
-            chunks = db_manager.get_chunks(book_id)
-            total_chunks = len(chunks)
+            # Get chunks from storage service (same logic as chunks endpoint)
+            storage_url = os.getenv("STORAGE_URL", "http://storage:8001")
+            print(f"DEBUG STATUS: Getting chunks for {book_id} from {storage_url}")
+            try:
+                async with httpx.AsyncClient() as client:
+                    response = await client.get(f"{storage_url}/books/{book_id}/audio-chunks")
+                    print(f"DEBUG STATUS: Storage response status: {response.status_code}")
+                    if response.status_code == 200:
+                        storage_data = response.json()
+                        total_chunks = storage_data.get("total_chunks", 0)
+                        print(f"DEBUG STATUS: Got total_chunks: {total_chunks}")
+                    else:
+                        print(f"DEBUG STATUS: Storage returned {response.status_code}")
+                    # If storage service returns 404, total_chunks remains None (will show as 0)
+            except Exception as e:
+                # If we can't reach storage service, total_chunks remains None
+                print(f"DEBUG STATUS: Exception getting chunks: {e}")
         elif book["total_chunks"] > 0:
             total_chunks = book["total_chunks"]
+            print(f"DEBUG STATUS: Using book total_chunks: {total_chunks}")
+        
+        print(f"DEBUG STATUS: Final total_chunks value: {total_chunks}")
         
         return BookStatusResponse(
             book_id=book["id"],
@@ -492,6 +510,60 @@ async def debug_book_chunks(book_id: str):
     except Exception as e:
         print(f"DEBUG: Exception occurred: {str(e)}")
         return {"error": str(e)}
+
+
+@app.delete("/api/v1/books/{book_id}")
+async def delete_book(
+    book_id: str,
+    api_key: str = Depends(verify_api_key)
+):
+    """Delete a book and all its associated data."""
+    try:
+        # Check if book exists
+        book = db_manager.get_book(book_id)
+        if not book:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Book with ID {book_id} not found"
+            )
+        
+        # Delete from main database
+        db_manager.delete_book(book_id)
+        
+        # Clean up storage service chunks
+        storage_url = os.getenv("STORAGE_URL", "http://storage:8001")
+        try:
+            async with httpx.AsyncClient() as client:
+                # Delete chunks from storage database
+                await client.delete(f"{storage_url}/books/{book_id}/audio-chunks")
+        except Exception as e:
+            print(f"Warning: Failed to delete chunks from storage service: {e}")
+        
+        # Clean up files
+        import shutil
+        file_paths_to_remove = [
+            f"/data/text/{book_id}",
+            f"/data/wav/{book_id}",
+            f"/data/ogg/{book_id}"
+        ]
+        
+        for path in file_paths_to_remove:
+            try:
+                if Path(path).exists():
+                    shutil.rmtree(path)
+                    print(f"Deleted directory: {path}")
+            except Exception as e:
+                print(f"Warning: Failed to delete {path}: {e}")
+        
+        return {"message": f"Successfully deleted book '{book['title']}' and all associated data"}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to delete book: {str(e)}"
+        )
 
 
 if __name__ == "__main__":

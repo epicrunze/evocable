@@ -297,6 +297,31 @@ async def get_audio_chunks(book_id: str) -> Dict[str, Any]:
         raise HTTPException(status_code=500, detail=f"Failed to get audio chunks: {str(e)}")
 
 
+@app.delete("/books/{book_id}/audio-chunks")
+async def delete_audio_chunks(book_id: str) -> Dict[str, str]:
+    """Delete all audio chunks for a book."""
+    try:
+        db = SessionLocal()
+        try:
+            # Delete chunks from database
+            deleted_count = db.query(Chunk).filter(Chunk.book_id == book_id).delete()
+            
+            # Delete book record if it exists
+            book_deleted = db.query(Book).filter(Book.id == book_id).delete()
+            
+            db.commit()
+            
+            return {
+                "message": f"Deleted {deleted_count} chunks and {book_deleted} book record for book {book_id}"
+            }
+            
+        finally:
+            db.close()
+            
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete audio chunks: {str(e)}")
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(

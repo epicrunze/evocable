@@ -328,33 +328,6 @@ export default function BookDetailPage() {
               </div>
             </div>
           )}
-
-          {/* Chapter List (if available) */}
-          {chunks && chunks.chunks.length > 0 && (
-            <div className="card">
-              <h2 className="text-lg font-medium text-gray-900 mb-4">Chapters</h2>
-              <div className="space-y-2">
-                {chunks.chunks.map((chunk, index) => (
-                  <div
-                    key={chunk.seq}
-                    className="flex items-center justify-between p-3 rounded-lg hover:bg-gray-50 transition-colors"
-                  >
-                    <div className="flex items-center">
-                      <span className="text-sm font-medium text-gray-900 mr-3">
-                        {index + 1}.
-                      </span>
-                      <span className="text-sm text-gray-600">
-                        Chapter {chunk.seq}
-                      </span>
-                    </div>
-                    <span className="text-xs text-gray-500">
-                      {formatDuration(chunk.duration_s)}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
         </div>
       </Layout>
     </>

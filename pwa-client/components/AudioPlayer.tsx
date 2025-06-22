@@ -90,6 +90,16 @@ export default function AudioPlayer({ bookId, chunks, title }: AudioPlayerProps)
     }
   }, [currentChunk, chunks.length, isPlaying])
 
+  // Cleanup object URLs on unmount
+  useEffect(() => {
+    return () => {
+      const audio = audioRef.current
+      if (audio && audio.src && audio.src.startsWith('blob:')) {
+        URL.revokeObjectURL(audio.src)
+      }
+    }
+  }, [])
+
   const playChunk = async (chunkIndex: number) => {
     if (chunkIndex < 0 || chunkIndex >= chunks.length) return
     
@@ -101,6 +111,11 @@ export default function AudioPlayer({ bookId, chunks, title }: AudioPlayerProps)
     if (!audio) return
 
     try {
+      // Clean up previous object URL to prevent memory leaks
+      if (audio.src && audio.src.startsWith('blob:')) {
+        URL.revokeObjectURL(audio.src)
+      }
+      
       const chunkUrl = await apiClient.getChunkUrl(bookId, chunks[chunkIndex].seq)
       audio.src = chunkUrl
       audio.load()
@@ -230,7 +245,7 @@ export default function AudioPlayer({ bookId, chunks, title }: AudioPlayerProps)
       <div className="mb-6">
         <h3 className="text-lg font-medium text-gray-900 truncate">{title}</h3>
         <p className="text-sm text-gray-500">
-          Chapter {currentChunk + 1} of {chunks.length} • {formatTime(totalDuration)} total
+          {formatTime(totalDuration)} total • {chunks.length} audio segments
         </p>
       </div>
 
@@ -308,10 +323,6 @@ export default function AudioPlayer({ bookId, chunks, title }: AudioPlayerProps)
         </div>
       )}
 
-      {/* Current Chunk Info */}
-      <div className="mt-4 text-xs text-gray-500 text-center">
-        Playing chunk {chunks[currentChunk]?.seq} • Duration: {formatTime(chunks[currentChunk]?.duration_s || 0)}
-      </div>
     </div>
   )
 } 

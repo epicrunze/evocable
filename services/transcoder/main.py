@@ -61,13 +61,35 @@ class AudioTranscoder:
                             # Process the book
                             success = await self._transcode_book(book_id)
                             
-                            # Send completion notification
+                            # Prepare completion notification data
                             completion_data = {
                                 "book_id": book_id,
                                 "success": success,
                                 "error": None if success else "Transcoding failed"
                             }
                             
+                            # If successful, include chunk information for the API to update the database
+                            if success:
+                                try:
+                                    # Read the metadata file we created
+                                    metadata_file = self.ogg_data_path / book_id / "metadata.json"
+                                    if metadata_file.exists():
+                                        with open(metadata_file, 'r') as f:
+                                            chunks_data = json.load(f)
+                                        
+                                        completion_data["total_chunks"] = len(chunks_data)
+                                        completion_data["chunks"] = chunks_data
+                                        logger.info(f"Including {len(chunks_data)} chunks in completion notification")
+                                    else:
+                                        logger.warning(f"Metadata file not found: {metadata_file}")
+                                        completion_data["total_chunks"] = 0
+                                        completion_data["chunks"] = []
+                                except Exception as e:
+                                    logger.error(f"Failed to read chunk metadata for completion: {e}")
+                                    completion_data["total_chunks"] = 0
+                                    completion_data["chunks"] = []
+                            
+                            # Send completion notification
                             self.redis_client.lpush(
                                 "transcode_completed",
                                 json.dumps(completion_data)
@@ -121,12 +143,15 @@ class AudioTranscoder:
             book_ogg_dir = self.ogg_data_path / book_id
             book_ogg_dir.mkdir(parents=True, exist_ok=True)
             
-            # Transcode each WAV file
+            # Transcode each WAV file with global chunk sequence
             transcoded_chunks = []
+            global_chunk_seq = 0  # Global sequence counter across all WAV files
+            
             for wav_file_info in wav_files:
-                chunks = await self._transcode_wav_file(wav_file_info, book_ogg_dir)
+                chunks = await self._transcode_wav_file(wav_file_info, book_ogg_dir, global_chunk_seq)
                 if chunks:
                     transcoded_chunks.extend(chunks)
+                    global_chunk_seq += len(chunks)  # Update global sequence counter
                 else:
                     logger.error(f"Failed to transcode WAV file {wav_file_info['file_path']}")
                     return False
@@ -160,13 +185,14 @@ class AudioTranscoder:
             logger.error(f"Failed to get WAV files for book {book_id}: {e}")
             return []
     
-    async def _transcode_wav_file(self, wav_file_info: Dict[str, Any], output_dir: Path) -> List[Dict[str, Any]]:
+    async def _transcode_wav_file(self, wav_file_info: Dict[str, Any], output_dir: Path, global_chunk_seq: int) -> List[Dict[str, Any]]:
         """
         Transcode a single WAV file to segmented Opus format.
         
         Args:
             wav_file_info: WAV file metadata
             output_dir: Output directory for Opus files
+            global_chunk_seq: Global sequence counter for the current WAV file
             
         Returns:
             List of transcoded chunk information
@@ -191,7 +217,7 @@ class AudioTranscoder:
                     break
                 
                 # Generate output filename
-                chunk_seq = seq * 1000 + segment_idx  # Unique sequence across all chunks
+                chunk_seq = global_chunk_seq + segment_idx  # Global sequence counter for the current WAV file
                 output_file = output_dir / f"chunk_{chunk_seq:06d}.ogg"
                 
                 # FFmpeg command for transcoding
