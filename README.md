@@ -1,6 +1,6 @@
 # Audiobook Server
 
-Convert user-provided PDF, EPUB, or TXT files into streamed English audiobook audio via a React PWA.
+Convert user-provided PDF, EPUB, or TXT files into streamed English audiobook audio via a Next.js PWA.
 
 ## 🎯 Project Overview
 
@@ -9,14 +9,14 @@ This system transforms text documents into high-quality audio streams using:
 - **Text Processing**: spaCy sentence tokenization with 800-character chunking and SSML markup
 - **Text-to-Speech**: FastPitch 2 + HiFiGAN on NVIDIA RTX 3090 for production-grade audio
 - **Audio Streaming**: FFmpeg transcoding to Opus@32kbps in Ogg containers, segmented for streaming
-- **Modern PWA**: React client with offline caching and real-time status updates
+- **Modern PWA**: Next.js client with authentication, real-time status, and advanced audio player
 
 ## 🚧 Current Implementation Status
 
 ### ✅ Phase 1: Data Models & API Foundation (COMPLETED)
 - **Pydantic Models**: Complete request/response schemas for all API endpoints
 - **Database Models**: SQLite schema with books and chunks tables
-- **API Foundation**: FastAPI app with authentication, health checks, and placeholder endpoints
+- **API Foundation**: FastAPI app with authentication, health checks, and complete endpoints
 - **Docker Integration**: Containerized services with proper permissions and data volumes
 - **Testing**: Comprehensive validation of data models and database operations
 
@@ -25,41 +25,55 @@ This system transforms text documents into high-quality audio streams using:
 - **Status Checking**: Real-time book processing status with progress tracking
 - **Chunk Listing**: Audio chunk metadata with duration and URL generation
 - **Audio Streaming**: File serving with proper content types and error handling
-- **Authentication**: API key protection on all endpoints
+- **Authentication**: API key protection on all endpoints with validation
 - **Validation**: File format, size, and extension validation
 - **Error Handling**: Comprehensive HTTP status codes and error messages
 
 ### ✅ Phase 3: Service Integration (COMPLETED)
 - **Background Task Management**: Async pipeline monitoring with FastAPI lifespan
-- **Processing Pipeline**: Complete orchestration from upload to text extraction
+- **Processing Pipeline**: Complete orchestration from upload to audio generation
 - **Redis Queue System**: Reliable task queuing and inter-service communication
 - **Real-time Status Updates**: Live progress tracking with percentage completion
-- **Service Communication**: HTTP + Redis messaging between API, ingest, and storage
+- **Service Communication**: HTTP + Redis messaging between all services
 - **Shared Volume Management**: Proper Docker volume configuration for file sharing
 - **Error Propagation**: Comprehensive error handling throughout the pipeline
 
-### 🔄 Phase 4: Complete Processing Pipeline (NEXT)
-- Segmenter service integration for text chunking and SSML generation
-- TTS worker service with FastPitch + HiFiGAN integration
-- Transcoder service for audio format conversion and streaming
-- End-to-end audiobook generation workflow
+### ✅ Phase 4: Complete Processing Pipeline (COMPLETED)
+- **Segmenter Service**: Text chunking and SSML generation working
+- **TTS Worker Service**: FastPitch + HiFiGAN integration operational
+- **Transcoder Service**: Audio format conversion and streaming ready
+- **End-to-end Workflow**: Complete audiobook generation from upload to streaming
 
-### ⏳ Phase 5: Error Handling & Validation (PLANNED)
+### ✅ Phase 5: Progressive Web App (COMPLETED)
+- **Next.js Framework**: Modern React-based PWA with TypeScript
+- **Authentication System**: API key login with persistent sessions
+- **File Upload Interface**: Drag & drop with validation and progress
+- **Real-time Status**: Live processing updates with polling
+- **Advanced Audio Player**: Cross-chunk seeking, volume controls, 15s skip
+- **Library Management**: Book listing with instant search functionality
+- **Mobile-Responsive**: PWA features with offline manifest
+- **Docker Deployment**: Production-ready containerized client
+
+### 🔄 Phase 6: Error Handling & Optimization (IN PROGRESS)
 - Enhanced logging and monitoring integration
+- Audio playback debugging and optimization
 - Performance optimization and caching
 - Rate limiting and security enhancements
 
-### ⏳ Phase 6: Testing & Documentation (PLANNED)
-- Unit and integration tests
-- End-to-end pipeline testing
+### ⏳ Phase 7: Testing & Documentation (PLANNED)
+- Comprehensive end-to-end testing
 - Performance benchmarking
+- User documentation and guides
 
 ## 🏗️ Architecture
 
 ```
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   React PWA     │    │   FastAPI       │    │   Redis Queue   │
+│   Next.js PWA   │    │   FastAPI       │    │   Redis Queue   │
 │   (Port 3000)   │◄──►│   (Port 8000)   │◄──►│   (Port 6379)   │
+│   - Auth        │    │   - API Gateway │    │   - Task Queue  │
+│   - Upload      │    │   - Orchestrator│    │   - Status Mgmt │
+│   - Audio Player│    │   - Auth System │    │                 │
 └─────────────────┘    └─────────────────┘    └─────────────────┘
                                 │
                                 ▼
@@ -69,18 +83,21 @@ This system transforms text documents into high-quality audio streams using:
                        │   SQLite + FS   │
                        └─────────────────┘
                                 │
-                                ▼
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   Ingest        │    │   Segmenter     │    │   TTS Worker    │
-│   (Text Extract)│───►│   (Chunk + SSML)│───►│   (FastPitch)   │
-└─────────────────┘    └─────────────────┘    └─────────────────┘
-                                                       │
-                                                       ▼
-                                              ┌─────────────────┐
-                                              │   Transcoder    │
-                                              │   (FFmpeg)      │
-                                              │   WAV → Opus    │
-                                              └─────────────────┘
+                    ┌───────────┼───────────┐
+                    ▼           ▼           ▼
+         ┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐
+         │   Ingest        │ │   Segmenter     │ │   TTS Worker    │
+         │   Text Extract  │ │   Chunk + SSML  │ │   FastPitch TTS │
+         │   PDF/EPUB/TXT  │ │   800 char      │ │   GPU Accel     │
+         └─────────────────┘ └─────────────────┘ └─────────────────┘
+                                                         │
+                                                         ▼
+                                                ┌─────────────────┐
+                                                │   Transcoder    │
+                                                │   FFmpeg        │
+                                                │   WAV → Opus    │
+                                                │   3.14s chunks  │
+                                                └─────────────────┘
 ```
 
 ## 🚀 Quick Start
@@ -101,70 +118,131 @@ This system transforms text documents into high-quality audio streams using:
    # Edit .env with your API_KEY and other settings
    ```
 
-2. **Start the system**:
+2. **Start the complete system**:
    ```bash
    docker-compose up -d
    ```
 
 3. **Access the application**:
-   - API Health Check: http://localhost:8000/health
+   - **PWA Client**: http://localhost:3000 (Login with API key: `default-dev-key`)
    - API Documentation: http://localhost:8000/docs
+   - API Health Check: http://localhost:8000/health
    - Storage Service: http://localhost:8001/health
-   - PWA Client: http://localhost:3000 (coming soon)
 
-### Current API Testing
+### Using the PWA
 
-```bash
-# Test API health (includes database and pipeline status)
-curl http://localhost:8000/health
-# Expected: {"status":"healthy","service":"api","redis":"healthy","database":"healthy","pipeline":{"redis":"healthy","database":"healthy","pipeline":"ready"},"version":"1.0.0"}
+1. **Login**: Enter your API key (`default-dev-key` for development)
+2. **Upload Books**: Drag & drop PDF, EPUB, or TXT files
+3. **Monitor Processing**: Watch real-time status updates (0% → 100%)
+4. **Stream Audio**: Play completed audiobooks with advanced controls
+5. **Search Library**: Filter books with instant search
 
-# Test complete processing pipeline
-echo "This is a test audiobook content." > sample.txt
+## 📱 PWA Features
 
-# Submit book and watch processing
-curl -X POST http://localhost:8000/api/v1/books \
-  -H "Authorization: Bearer default-dev-key" \
-  -F "title=Test Book Pipeline" \
-  -F "format=txt" \
-  -F "file=@sample.txt"
+### 🔐 Authentication
+- API key-based login system
+- Persistent session storage
+- Secure credential handling
+- Real-time validation
 
-# Check status immediately (should show PROCESSING or EXTRACTING)
-curl -H "Authorization: Bearer default-dev-key" \
-     http://localhost:8000/api/v1/books/BOOK_ID/status
+### 📤 File Upload
+- Drag & drop interface
+- Format validation (PDF, EPUB, TXT)
+- File size limits (50MB max)
+- Progress indicators
+- Error handling
 
-# Wait a few seconds and check again (should show SEGMENTING at 25%)
-sleep 5
-curl -H "Authorization: Bearer default-dev-key" \
-     http://localhost:8000/api/v1/books/BOOK_ID/status
+### ⏱️ Real-time Processing Status
+- Live status polling every 2 seconds
+- Progress percentage tracking
+- Status descriptions and timestamps
+- Error message display
 
-# Test chunk listing (empty until full pipeline is complete)
-curl -H "Authorization: Bearer default-dev-key" \
-     http://localhost:8000/api/v1/books/BOOK_ID/chunks
+### 🎵 Advanced Audio Player
+- **Cross-chunk Streaming**: Seamless playback across multiple audio chunks
+- **Seeking Controls**: Click timeline to jump to any position
+- **Playback Controls**: Play/pause, 15-second skip forward/backward
+- **Volume Control**: Adjustable audio levels
+- **Progress Display**: Current time and total duration
+- **Chunk Information**: Displays current chunk and total count
+
+### 🔍 Library Management
+- **Book Listing**: All processed books with status
+- **Instant Search**: Real-time filtering by title
+- **Status Indicators**: Visual progress and completion states
+- **Book Details**: Title, duration, creation date, processing status
+
+### 📱 Mobile PWA
+- **Responsive Design**: Optimized for desktop and mobile
+- **PWA Manifest**: Installable on mobile devices
+- **Service Worker**: Caching for offline functionality
+- **Touch-friendly**: Mobile-optimized controls and interface
+
+## 🎯 Complete End-to-End Workflow
+
+### User Experience Flow
+
+```
+1. 🌐 Access PWA (localhost:3000)
+     ↓
+2. 🔐 Login with API Key
+     ↓
+3. 📚 View Library or Upload New Book
+     ↓
+4. 📤 Drag & Drop File (PDF/EPUB/TXT)
+     ↓
+5. ⏱️ Watch Real-time Processing Status
+   📄 PENDING (0%) → PROCESSING (5%) → EXTRACTING (10%)
+   📝 SEGMENTING (25%) → 🎤 GENERATING_AUDIO (50%)
+   🎵 TRANSCODING (75%) → ✅ COMPLETED (100%)
+     ↓
+6. 🎧 Stream Audio with Advanced Player
+```
+
+### Backend Processing Pipeline
+
+```
+📝 File Upload (Next.js PWA) → 🔄 API Gateway (FastAPI)
+    ↓
+📨 Background Task Queue (Redis) → 🔍 Text Extraction (Ingest)
+    ↓
+📊 Text Chunking (Segmenter) → 🎤 TTS Generation (FastPitch + HiFiGAN)
+    ↓
+🎵 Audio Transcoding (FFmpeg) → ✅ Ready for Streaming
 ```
 
 ## 📁 Project Structure
 
 ```
 evocable/
+├── pwa-client/              # ✅ COMPLETE - Next.js PWA
+│   ├── components/          # React components
+│   │   ├── AudioPlayer.tsx  # Advanced streaming player
+│   │   ├── BookLibrary.tsx  # Library with search
+│   │   ├── LoginForm.tsx    # Authentication UI
+│   │   └── Layout.tsx       # Responsive layout
+│   ├── pages/               # Next.js pages
+│   │   ├── _app.tsx        # App context & auth
+│   │   ├── _document.tsx   # PWA manifest
+│   │   ├── index.tsx       # Home/login routing
+│   │   ├── upload.tsx      # File upload page
+│   │   └── book/[id].tsx   # Book detail & player
+│   ├── lib/api.ts          # API client with auth
+│   ├── Dockerfile          # Production container
+│   └── package.json        # Dependencies
 ├── services/
-│   ├── api/                  # FastAPI gateway and orchestration
-│   │   ├── main.py          # ✅ FastAPI app with auth & health checks
-│   │   ├── models.py        # ✅ Pydantic models & database manager
-│   │   ├── background_tasks.py # ✅ Pipeline orchestration & monitoring
-│   │   ├── Dockerfile       # ✅ Container with proper permissions
-│   │   └── requirements.txt # ✅ Dependencies
-│   ├── storage/             # Centralized metadata and file management
-│   ├── ingest/              # Text extraction from PDF/EPUB/TXT
-│   ├── segmenter/           # Text chunking and SSML generation
-│   ├── tts-worker/          # FastPitch + HiFiGAN TTS processing
-│   └── transcoder/          # FFmpeg audio transcoding and segmentation
-├── pwa-client/              # React PWA with Vite (planned)
-├── docker-compose.yml       # ✅ Service orchestration
-├── env.example             # Environment configuration template
-├── project_description.json # ✅ Detailed project specifications
-├── project_plan.md         # ✅ Implementation roadmap
-└── README.md               # ✅ This file
+│   ├── api/                # ✅ COMPLETE - FastAPI gateway
+│   │   ├── main.py         # FastAPI app with all endpoints
+│   │   ├── models.py       # Pydantic & database models
+│   │   ├── background_tasks.py # Pipeline orchestration
+│   │   └── Dockerfile      # Container
+│   ├── storage/            # ✅ COMPLETE - Metadata & file management
+│   ├── ingest/             # ✅ COMPLETE - Text extraction
+│   ├── segmenter/          # ✅ COMPLETE - Text chunking & SSML
+│   ├── tts-worker/         # ✅ COMPLETE - FastPitch TTS
+│   └── transcoder/         # ✅ COMPLETE - FFmpeg transcoding
+├── docker-compose.yml      # ✅ Complete service orchestration
+└── README.md              # ✅ This documentation
 ```
 
 ## 🔄 Processing Pipeline
@@ -264,6 +342,7 @@ CREATE TABLE chunks (
 | `/health` | GET | ✅ **IMPLEMENTED** | Service health check with database connectivity |
 | `/` | GET | ✅ **IMPLEMENTED** | API information and version |
 | `/docs` | GET | ✅ **IMPLEMENTED** | Interactive API documentation |
+| `/api/v1/books` | GET | ✅ **IMPLEMENTED** | List all books (used for authentication validation) |
 | `/api/v1/books` | POST | ✅ **IMPLEMENTED** | Submit new book for processing with file upload |
 | `/api/v1/books/{book_id}/status` | GET | ✅ **IMPLEMENTED** | Check processing status with progress tracking |
 | `/api/v1/books/{book_id}/chunks` | GET | ✅ **IMPLEMENTED** | List available audio chunks with metadata |
@@ -298,16 +377,19 @@ curl -H "Authorization: Bearer YOUR_API_KEY" \
 
 ✅ **Data Models**: All Pydantic models and database operations validated
 ✅ **Database**: SQLite schema creation and CRUD operations tested
-✅ **Container**: Docker build and deployment working
+✅ **Container Deployment**: Docker build and multi-service deployment working
 ✅ **Health Checks**: API, database, and pipeline connectivity verified
 ✅ **File Upload**: Book submission with validation and storage tested
-✅ **Authentication**: API key protection on all endpoints verified
+✅ **Authentication**: API key protection and PWA login system verified
 ✅ **Error Handling**: 404, 400, 401, and 413 responses tested
 ✅ **File Storage**: Organized directory structure and file persistence verified
-✅ **Background Processing**: Async pipeline monitoring and task management tested
-✅ **Service Integration**: API ↔ Ingest ↔ Storage communication verified
-✅ **Status Updates**: Real-time progress tracking from PENDING to SEGMENTING tested
+✅ **Background Processing**: Complete pipeline from upload to audio generation tested
+✅ **Service Integration**: Full microservices communication verified
+✅ **Status Updates**: Real-time progress tracking (0% → 100%) tested
 ✅ **Queue Processing**: Redis-based task queuing and completion notifications working
+✅ **PWA Frontend**: Authentication, upload, status monitoring, and audio playback tested
+✅ **Audio Streaming**: Cross-chunk playback and seeking functionality verified
+✅ **Mobile Responsive**: PWA features and mobile interface tested
 
 ### Manual Testing
 

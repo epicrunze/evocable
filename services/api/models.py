@@ -151,6 +151,15 @@ class DatabaseManager:
             row = cursor.fetchone()
             return dict(row) if row else None
     
+    def list_books(self) -> List[dict]:
+        """Get all books in the database."""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute("""
+                SELECT * FROM books ORDER BY created_at DESC
+            """)
+            return [dict(row) for row in cursor.fetchall()]
+    
     def update_book_status(self, book_id: str, status: str, percent_complete: float = None, 
                           error_message: str = None, total_chunks: int = None):
         """Update book processing status."""

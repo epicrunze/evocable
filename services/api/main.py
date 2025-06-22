@@ -151,6 +151,19 @@ async def root() -> Dict[str, str]:
 # Placeholder endpoints for Phase 2 implementation
 # These will be implemented in the next phase
 
+@app.get("/api/v1/books")
+async def list_books(api_key: str = Depends(verify_api_key)):
+    """List all books - used for API key validation."""
+    try:
+        books = db_manager.list_books()
+        return {"books": books}
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to list books: {str(e)}"
+        )
+
+
 @app.post("/api/v1/books", response_model=BookResponse, status_code=status.HTTP_201_CREATED)
 async def submit_book(
     title: str = Form(..., description="Book title"),

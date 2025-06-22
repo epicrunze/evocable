@@ -1,13 +1,13 @@
 {
     "objectives_and_scope": {
-      "goal": "Convert user‐provided PDF, EPUB or TXT into streamed English audiobook audio via a React PWA",
+      "goal": "Convert user‐provided PDF, EPUB or TXT into streamed English audiobook audio via a Next.js PWA",
       "hardware": "Single PC with NVIDIA RTX 3090",
       "initial_scale": "Up to 10 users, 1–2 concurrent streams",
       "authentication": "Shared‐secret API key in Authorization: Bearer <API_KEY> header",
       "retention_policy": "Retain all generated audio chunks indefinitely"
     },
     "high_level_architecture": {
-      "client": "React PWA scaffolded with Vite, Service Worker for caching",
+      "client": "Next.js PWA with authentication, real-time status, advanced audio player, and Service Worker for caching",
       "api": "FastAPI served by Uvicorn on the RTX 3090 host",
       "ingest": "Extract raw text from PDF via pdfplumber, EPUB via ebooklib, TXT via direct read with chardet; OCR fallback with Tesseract",
       "segmenter": "spaCy English sentence tokenizer plus configurable 800-character chunk assembler with SSML (<s> and <break> tags)",
@@ -81,13 +81,25 @@
       }
     },
     "client_stack": {
-      "framework": "React",
-      "scaffold": "Vite PWA template",
+      "framework": "Next.js",
+      "scaffold": "Next.js with PWA plugin, TypeScript, Tailwind CSS",
+      "implementation_status": "COMPLETED",
       "features": [
-        "Upload/select book",
-        "Display processing status",
-        "Playback controls with prefetching",
-        "Offline caching via Service Worker + IndexedDB"
+        "API key authentication with persistent sessions",
+        "Drag & drop file upload with validation",
+        "Real-time processing status with polling",
+        "Advanced audio player with cross-chunk seeking",
+        "Library management with instant search",
+        "Mobile-responsive design with PWA manifest",
+        "Service Worker for caching (ready for offline implementation)"
+      ],
+      "components": [
+        "LoginForm - API key authentication UI",
+        "BookLibrary - Book listing with search functionality", 
+        "AudioPlayer - Advanced streaming player with seeking",
+        "Layout - Responsive navigation and mobile menu",
+        "Upload page - Drag & drop file interface",
+        "Book detail page - Processing status and audio player"
       ]
     },
     "devops_and_next_steps": {

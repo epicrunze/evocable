@@ -7,25 +7,38 @@ WORKDIR /app
 COPY package*.json ./
 
 # Install dependencies
-RUN npm ci
+RUN npm install
 
 # Copy source code
 COPY . .
 
-# Build the application
+# Build the Next.js application
 RUN npm run build
 
 # Production stage
-FROM nginx:alpine
+FROM node:18-alpine as runner
+
+# Set working directory
+WORKDIR /app
+
+# Create a non-root user
+RUN addgroup --system --gid 1001 nodejs
+RUN adduser --system --uid 1001 nextjs
 
 # Copy built application
-COPY --from=builder /app/dist /usr/share/nginx/html
+COPY --from=builder /app/public ./public
+COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
+COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 
-# Copy nginx configuration
-COPY nginx.conf /etc/nginx/nginx.conf
+# Switch to non-root user
+USER nextjs
 
 # Expose port
 EXPOSE 3000
 
-# Start nginx
-CMD ["nginx", "-g", "daemon off;"] 
+# Environment variable
+ENV PORT 3000
+ENV NODE_ENV production
+
+# Start the application
+CMD ["node", "server.js"] 

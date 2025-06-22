@@ -147,17 +147,18 @@ services:
       timeout: 10s
       retries: 3
 
-  # React PWA Client
-  #  client:
-  #    build: ./pwa-client
-  #    image: audiobook-client:latest
-  #    ports:
-  #      - "3000:3000"
-  #    environment:
-  #      API_BASE_URL: "http://localhost:8000"
-  #    depends_on:
-  #      - api
-  #    restart: unless-stopped
+  # Next.js PWA Client
+  client:
+    build: ./pwa-client
+    image: audiobook-client:latest
+    ports:
+      - "3000:3000"
+    environment:
+      API_URL: "http://api:8000"
+      NODE_ENV: "production"
+    depends_on:
+      - api
+    restart: unless-stopped
 
 volumes:
   text_data:
