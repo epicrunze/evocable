@@ -40,7 +40,7 @@ This system transforms text documents into high-quality audio streams using:
 
 ### ✅ Phase 4: Complete Processing Pipeline (COMPLETED)
 - **Segmenter Service**: Text chunking and SSML generation working
-- **TTS Worker Service**: FastPitch + HiFiGAN integration operational
+- **TTS Worker Service**: Coqui integration operational
 - **Transcoder Service**: Audio format conversion and streaming ready
 - **End-to-end Workflow**: Complete audiobook generation from upload to streaming
 
@@ -87,7 +87,7 @@ This system transforms text documents into high-quality audio streams using:
                     ▼           ▼           ▼
          ┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐
          │   Ingest        │ │   Segmenter     │ │   TTS Worker    │
-         │   Text Extract  │ │   Chunk + SSML  │ │   FastPitch TTS │
+         │   Text Extract  │ │   Chunk + SSML  │ │   Coqui TTS     │
          │   PDF/EPUB/TXT  │ │   800 char      │ │   GPU Accel     │
          └─────────────────┘ └─────────────────┘ └─────────────────┘
                                                          │
@@ -206,7 +206,7 @@ This system transforms text documents into high-quality audio streams using:
     ↓
 📨 Background Task Queue (Redis) → 🔍 Text Extraction (Ingest)
     ↓
-📊 Text Chunking (Segmenter) → 🎤 TTS Generation (FastPitch + HiFiGAN)
+📊 Text Chunking (Segmenter) → 🎤 TTS Generation (Coqui)
     ↓
 🎵 Audio Transcoding (FFmpeg) → ✅ Ready for Streaming
 ```
@@ -239,7 +239,7 @@ evocable/
 │   ├── storage/            # ✅ COMPLETE - Metadata & file management
 │   ├── ingest/             # ✅ COMPLETE - Text extraction
 │   ├── segmenter/          # ✅ COMPLETE - Text chunking & SSML
-│   ├── tts-worker/         # ✅ COMPLETE - FastPitch TTS
+│   ├── tts-worker/         # ✅ COMPLETE - Coqui
 │   └── transcoder/         # ✅ COMPLETE - FFmpeg transcoding
 ├── docker-compose.yml      # ✅ Complete service orchestration
 └── README.md              # ✅ This documentation
@@ -485,7 +485,7 @@ docker-compose logs -f
    - Metadata extraction and storage
 
 2. **TTS Worker Service Integration**
-   - FastPitch + HiFiGAN model integration
+   - Coqui model integration
    - GPU-accelerated audio generation
    - Batch processing optimization
 
