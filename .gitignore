@@ -10,7 +10,6 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
 lib64/
 parts/
 sdist/
@@ -21,6 +20,10 @@ share/python-wheels/
 .installed.cfg
 *.egg
 MANIFEST
+
+# Python lib directories (but not JavaScript lib directories)
+build/lib/
+dist/lib/
 
 # PyInstaller
 *.manifest
