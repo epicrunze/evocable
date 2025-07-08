@@ -92,6 +92,9 @@ class DatabaseManager:
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
         
         with sqlite3.connect(self.db_path) as conn:
+            # Enable foreign key constraints
+            conn.execute("PRAGMA foreign_keys = ON")
+            
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS books (
                     id TEXT PRIMARY KEY,
@@ -133,6 +136,9 @@ class DatabaseManager:
         book_id = str(uuid.uuid4())
         
         with sqlite3.connect(self.db_path) as conn:
+            # Enable foreign key constraints
+            conn.execute("PRAGMA foreign_keys = ON")
+            
             conn.execute("""
                 INSERT INTO books (id, title, format, file_path)
                 VALUES (?, ?, ?, ?)
@@ -160,16 +166,19 @@ class DatabaseManager:
             """)
             return [dict(row) for row in cursor.fetchall()]
     
-    def update_book_status(self, book_id: str, status: str, percent_complete: float = None, 
-                          error_message: str = None, total_chunks: int = None):
+    def update_book_status(self, book_id: str, status: str, percent_complete: Optional[float] = None, 
+                          error_message: Optional[str] = None, total_chunks: Optional[int] = None):
         """Update book processing status."""
         with sqlite3.connect(self.db_path) as conn:
+            # Enable foreign key constraints
+            conn.execute("PRAGMA foreign_keys = ON")
+            
             updates = ["status = ?", "updated_at = CURRENT_TIMESTAMP"]
             params = [status]
             
             if percent_complete is not None:
                 updates.append("percent_complete = ?")
-                params.append(percent_complete)
+                params.append(str(percent_complete))
             
             if error_message is not None:
                 updates.append("error_message = ?")
@@ -177,7 +186,7 @@ class DatabaseManager:
             
             if total_chunks is not None:
                 updates.append("total_chunks = ?")
-                params.append(total_chunks)
+                params.append(str(total_chunks))
             
             params.append(book_id)
             
@@ -188,15 +197,19 @@ class DatabaseManager:
             conn.commit()
     
     def create_chunk(self, book_id: str, seq: int, duration_s: float, 
-                    file_path: str, file_size: int = None) -> int:
+                    file_path: str, file_size: Optional[int] = None) -> int:
         """Create a new chunk record and return the chunk ID."""
         with sqlite3.connect(self.db_path) as conn:
+            # Enable foreign key constraints
+            conn.execute("PRAGMA foreign_keys = ON")
+            
             cursor = conn.execute("""
                 INSERT INTO chunks (book_id, seq, duration_s, file_path, file_size)
                 VALUES (?, ?, ?, ?, ?)
             """, (book_id, seq, duration_s, file_path, file_size))
             conn.commit()
-            return cursor.lastrowid
+            result = cursor.lastrowid
+            return result if result is not None else 0
     
     def get_chunks(self, book_id: str) -> List[dict]:
         """Get all chunks for a book, ordered by sequence."""
@@ -223,5 +236,12 @@ class DatabaseManager:
     def delete_book(self, book_id: str):
         """Delete a book and all its chunks."""
         with sqlite3.connect(self.db_path) as conn:
+            # Enable foreign key constraints
+            conn.execute("PRAGMA foreign_keys = ON")
+            
+            # Delete chunks first (in case cascade doesn't work)
+            conn.execute("DELETE FROM chunks WHERE book_id = ?", (book_id,))
+            
+            # Delete the book
             conn.execute("DELETE FROM books WHERE id = ?", (book_id,))
             conn.commit() 

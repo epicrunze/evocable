@@ -3,7 +3,4 @@ pytest-asyncio==0.21.1
 httpx==0.25.2
 fastapi[testing]==0.104.1
 redis==5.0.1
-sqlite3
-pathlib
-tempfile
-unittest.mock 
+python-multipart 
