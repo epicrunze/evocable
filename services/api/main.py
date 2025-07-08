@@ -27,6 +27,16 @@ from models import (
     BookFormat
 )
 
+# Import authentication models
+from auth_models import (
+    LoginRequest,
+    LoginResponse,
+    RefreshResponse,
+    LogoutResponse,
+    User,
+    session_manager
+)
+
 # Import background task processing
 from background_tasks import pipeline
 
@@ -97,15 +107,23 @@ db_manager = DatabaseManager(
 )
 
 
-def verify_api_key(credentials: HTTPAuthorizationCredentials = Depends(security)) -> str:
-    """Verify API key from Authorization header."""
-    api_key = os.getenv("API_KEY", "default-dev-key")
-    if credentials.credentials != api_key:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid API key"
-        )
-    return credentials.credentials
+def verify_authentication(credentials: HTTPAuthorizationCredentials = Depends(security)) -> str:
+    """Verify authentication from Authorization header (API key or session token)."""
+    token = credentials.credentials
+    
+    # First, try to validate as session token
+    payload = session_manager.validate_session_token(token)
+    if payload:
+        return token
+    
+    # If not a valid session token, try as API key
+    if session_manager.validate_api_key(token):
+        return token
+    
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid authentication credentials"
+    )
 
 
 @app.get("/health")
@@ -148,12 +166,103 @@ async def root() -> Dict[str, str]:
     }
 
 
-# Placeholder endpoints for Phase 2 implementation
-# These will be implemented in the next phase
+@app.post("/test")
+async def test_post(data: dict = None) -> Dict[str, Any]:
+    """Test POST endpoint to debug frontend requests."""
+    return {
+        "message": "POST request successful",
+        "received_data": data,
+        "method": "POST"
+    }
+
+
+# Authentication endpoints
+@app.post("/auth/login", response_model=LoginResponse)
+async def login(request: LoginRequest) -> LoginResponse:
+    """Authenticate user with API key and return session token."""
+    try:
+        if not session_manager.validate_api_key(request.apiKey):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid API key"
+            )
+        
+        # Create session token
+        user_id = "admin"  # For now, single admin user
+        session_token, expires_at = session_manager.create_session_token(
+            user_id, 
+            remember=request.remember
+        )
+        
+        # Get user info
+        user = session_manager.get_user_info(user_id)
+        
+        return LoginResponse(
+            sessionToken=session_token,
+            expiresAt=expires_at.isoformat() + "Z",
+            user=user
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Login failed: {str(e)}"
+        )
+
+
+@app.post("/auth/refresh", response_model=RefreshResponse)
+async def refresh_token(token: str = Depends(verify_authentication)) -> RefreshResponse:
+    """Refresh session token."""
+    try:
+        result = session_manager.refresh_session_token(token)
+        
+        if not result:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid or expired token"
+            )
+        
+        new_token, expires_at, user = result
+        
+        return RefreshResponse(
+            sessionToken=new_token,
+            expiresAt=expires_at.isoformat() + "Z",
+            user=user
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Token refresh failed: {str(e)}"
+        )
+
+
+@app.post("/auth/logout", response_model=LogoutResponse)
+async def logout(token: str = Depends(verify_authentication)) -> LogoutResponse:
+    """Logout user and invalidate session token."""
+    try:
+        # For now, just return success message
+        # In production, you might want to maintain a blacklist of invalidated tokens
+        return LogoutResponse(
+            message="Successfully logged out"
+        )
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Logout failed: {str(e)}"
+        )
+
+
+# Book management endpoints
 
 @app.get("/api/v1/books")
-async def list_books(api_key: str = Depends(verify_api_key)):
-    """List all books - used for API key validation."""
+async def list_books(token: str = Depends(verify_authentication)):
+    """List all books - used for authentication validation."""
     try:
         books = db_manager.list_books()
         return {"books": books}
@@ -169,7 +278,7 @@ async def submit_book(
     title: str = Form(..., description="Book title"),
     format: str = Form(..., description="Book format (pdf, epub, txt)"),
     file: UploadFile = File(..., description="Book file to process"),
-    api_key: str = Depends(verify_api_key)
+    token: str = Depends(verify_authentication)
 ):
     """Submit a book for processing."""
     try:
@@ -257,7 +366,7 @@ async def submit_book(
 @app.get("/api/v1/books/{book_id}/status", response_model=BookStatusResponse)
 async def get_book_status(
     book_id: str,
-    api_key: str = Depends(verify_api_key)
+    token: str = Depends(verify_authentication)
 ):
     """Get book processing status."""
     try:
@@ -319,7 +428,7 @@ async def get_book_status(
 @app.get("/api/v1/books/{book_id}/chunks", response_model=ChunkListResponse)
 async def list_book_chunks(
     book_id: str,
-    api_key: str = Depends(verify_api_key)
+    token: str = Depends(verify_authentication)
 ):
     """List available audio chunks for a book."""
     try:
@@ -384,7 +493,7 @@ async def list_book_chunks(
 async def get_audio_chunk(
     book_id: str, 
     seq: int,
-    api_key: str = Depends(verify_api_key)
+    token: str = Depends(verify_authentication)
 ):
     """Stream an audio chunk."""
     try:
@@ -515,7 +624,7 @@ async def debug_book_chunks(book_id: str):
 @app.delete("/api/v1/books/{book_id}")
 async def delete_book(
     book_id: str,
-    api_key: str = Depends(verify_api_key)
+    token: str = Depends(verify_authentication)
 ):
     """Delete a book and all its associated data."""
     try:
