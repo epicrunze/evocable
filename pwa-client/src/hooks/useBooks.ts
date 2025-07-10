@@ -1,161 +1,272 @@
+'use client';
+
+import { useState, useMemo, useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { booksApi } from '@/lib/api/books';
-import { BookLibraryQuery, BookUpload } from '@/types/book';
+import { Book } from '@/types/book';
+import { apiClient } from '@/lib/api/client';
+import { LibraryQuery } from '@/components/features/library/SearchBar';
+
+export interface UseBookData {
+  books: Book[];
+  filteredBooks: Book[];
+  loading: boolean;
+  error: string | null;
+  totalBooks: number;
+  query: LibraryQuery;
+  refetch: () => void;
+  updateQuery: (newQuery: LibraryQuery) => void;
+  deleteBook: (bookId: string) => Promise<void>;
+  refreshBook: (bookId: string) => Promise<void>;
+}
 
 // Query keys
-export const BOOKS_QUERY_KEYS = {
+export const bookQueryKeys = {
   all: ['books'] as const,
-  lists: () => [...BOOKS_QUERY_KEYS.all, 'list'] as const,
-  list: (query?: BookLibraryQuery) => [...BOOKS_QUERY_KEYS.lists(), query] as const,
-  details: () => [...BOOKS_QUERY_KEYS.all, 'detail'] as const,
-  detail: (id: string) => [...BOOKS_QUERY_KEYS.details(), id] as const,
-  chunks: (id: string) => [...BOOKS_QUERY_KEYS.detail(id), 'chunks'] as const,
-  status: (id: string) => [...BOOKS_QUERY_KEYS.detail(id), 'status'] as const,
+  lists: () => [...bookQueryKeys.all, 'list'] as const,
+  list: (query: LibraryQuery) => [...bookQueryKeys.lists(), query] as const,
+  details: () => [...bookQueryKeys.all, 'detail'] as const,
+  detail: (id: string) => [...bookQueryKeys.details(), id] as const,
 };
 
-/**
- * Hook to fetch books with filtering and pagination
- */
-export function useBooks(query?: BookLibraryQuery) {
-  return useQuery({
-    queryKey: BOOKS_QUERY_KEYS.list(query),
-    queryFn: () => booksApi.getBooks(query),
-    staleTime: 5 * 60 * 1000, // 5 minutes
-    gcTime: 10 * 60 * 1000, // 10 minutes
+// API functions
+async function fetchBooks(query?: LibraryQuery): Promise<Book[]> {
+  const response = await apiClient.get<{ books: Book[] }>('/books', {
+    search: query?.search,
+    status: query?.status?.join(','),
+    sort_by: query?.sortBy,
+    sort_order: query?.sortOrder,
+  });
+
+  if (response.error) {
+    throw new Error(response.error.message);
+  }
+
+  return response.data?.books || [];
+}
+
+async function deleteBookApi(bookId: string): Promise<void> {
+  const response = await apiClient.delete(`/books/${bookId}`);
+  
+  if (response.error) {
+    throw new Error(response.error.message);
+  }
+}
+
+async function fetchBookDetails(bookId: string): Promise<Book> {
+  const response = await apiClient.get<Book>(`/books/${bookId}`);
+  
+  if (response.error) {
+    throw new Error(response.error.message);
+  }
+  
+  if (!response.data) {
+    throw new Error('Book not found');
+  }
+  
+  return response.data;
+}
+
+// Filtering and sorting utilities
+function filterBooks(books: Book[], query: LibraryQuery): Book[] {
+  let filtered = books;
+
+  // Filter by search term
+  if (query.search) {
+    const searchTerm = query.search.toLowerCase();
+    filtered = filtered.filter(book =>
+      book.title.toLowerCase().includes(searchTerm) ||
+      book.format.toLowerCase().includes(searchTerm)
+    );
+  }
+
+  // Filter by status
+  if (query.status && query.status.length > 0) {
+    filtered = filtered.filter(book => 
+      query.status!.includes(book.status)
+    );
+  }
+
+  return filtered;
+}
+
+function sortBooks(books: Book[], query: LibraryQuery): Book[] {
+  const sortBy = query.sortBy || 'created_at';
+  const sortOrder = query.sortOrder || 'desc';
+
+  return [...books].sort((a, b) => {
+    let aValue: string | number | Date;
+    let bValue: string | number | Date;
+
+    switch (sortBy) {
+      case 'title':
+        aValue = a.title.toLowerCase();
+        bValue = b.title.toLowerCase();
+        break;
+      case 'created_at':
+        aValue = new Date(a.created_at);
+        bValue = new Date(b.created_at);
+        break;
+      case 'updated_at':
+        aValue = new Date(a.updated_at);
+        bValue = new Date(b.updated_at);
+        break;
+      default:
+        aValue = a.created_at;
+        bValue = b.created_at;
+    }
+
+    let comparison = 0;
+    if (aValue < bValue) comparison = -1;
+    if (aValue > bValue) comparison = 1;
+
+    return sortOrder === 'asc' ? comparison : -comparison;
   });
 }
 
-/**
- * Hook to fetch a specific book
- */
-export function useBook(id: string) {
-  return useQuery({
-    queryKey: BOOKS_QUERY_KEYS.detail(id),
-    queryFn: () => booksApi.getBook(id),
-    enabled: !!id,
-    staleTime: 5 * 60 * 1000,
-  });
-}
-
-/**
- * Hook to fetch a book with audio chunks
- */
-export function useBookWithChunks(id: string) {
-  return useQuery({
-    queryKey: BOOKS_QUERY_KEYS.chunks(id),
-    queryFn: () => booksApi.getBookWithChunks(id),
-    enabled: !!id,
-    staleTime: 5 * 60 * 1000,
-  });
-}
-
-/**
- * Hook to track book processing status
- */
-export function useBookStatus(id: string, enabled = true) {
-  return useQuery({
-    queryKey: BOOKS_QUERY_KEYS.status(id),
-    queryFn: () => booksApi.getProcessingStatus(id),
-    enabled: enabled && !!id,
-    refetchInterval: (query) => {
-      // Stop polling if processing is complete or failed
-      const status = query.state.data?.data?.status;
-      if (status === 'completed' || status === 'failed') {
-        return false;
-      }
-      return 2000; // Poll every 2 seconds
-    },
-    staleTime: 0, // Always fresh for status updates
-  });
-}
-
-/**
- * Hook to upload a book
- */
-export function useUploadBook() {
+export function useBooks(): UseBookData {
   const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: ({ upload, onProgress }: { upload: BookUpload; onProgress?: (progress: number) => void }) =>
-      booksApi.uploadBook(upload, onProgress),
-    onSuccess: (response) => {
-      // Invalidate and refetch books list
-      queryClient.invalidateQueries({ queryKey: BOOKS_QUERY_KEYS.lists() });
-      
-      // Add the new book to cache if successful
-      if (response.data) {
-        queryClient.setQueryData(
-          BOOKS_QUERY_KEYS.detail(response.data.id),
-          response
-        );
-      }
-    },
+  const [query, setQuery] = useState<LibraryQuery>({
+    sortBy: 'created_at',
+    sortOrder: 'desc',
   });
-}
 
-/**
- * Hook to delete a book
- */
-export function useDeleteBook() {
-  const queryClient = useQueryClient();
+  // Fetch books query
+  const {
+    data: books = [],
+    isLoading: loading,
+    error: queryError,
+    refetch,
+  } = useQuery({
+    queryKey: bookQueryKeys.list(query),
+    queryFn: () => fetchBooks(query),
+    staleTime: 30000, // 30 seconds
+    gcTime: 300000, // 5 minutes
+    refetchOnWindowFocus: true,
+    refetchInterval: 60000, // Refetch every minute to catch processing updates
+    retry: 3,
+    retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 30000),
+  });
 
-  return useMutation({
-    mutationFn: (id: string) => booksApi.deleteBook(id),
-    onSuccess: (_, id) => {
+  // Delete book mutation
+  const deleteMutation = useMutation({
+    mutationFn: deleteBookApi,
+    onSuccess: (_, bookId) => {
       // Remove from cache
-      queryClient.removeQueries({ queryKey: BOOKS_QUERY_KEYS.detail(id) });
-      queryClient.removeQueries({ queryKey: BOOKS_QUERY_KEYS.chunks(id) });
-      queryClient.removeQueries({ queryKey: BOOKS_QUERY_KEYS.status(id) });
+      queryClient.setQueryData(
+        bookQueryKeys.list(query),
+        (oldData: Book[] | undefined) => 
+          oldData?.filter(book => book.id !== bookId) || []
+      );
       
-      // Invalidate lists
-      queryClient.invalidateQueries({ queryKey: BOOKS_QUERY_KEYS.lists() });
+      // Invalidate related queries
+      queryClient.invalidateQueries({ queryKey: bookQueryKeys.all });
+    },
+    onError: (error) => {
+      console.error('Failed to delete book:', error);
     },
   });
-}
 
-/**
- * Hook to retry book processing
- */
-export function useRetryBookProcessing() {
-  const queryClient = useQueryClient();
+  // Memoized filtered and sorted books
+  const filteredBooks = useMemo(() => {
+    const filtered = filterBooks(books, query);
+    return sortBooks(filtered, query);
+  }, [books, query]);
 
-  return useMutation({
-    mutationFn: (id: string) => booksApi.retryProcessing(id),
-    onSuccess: (response, id) => {
-      // Update the book in cache
-      if (response.data) {
-        queryClient.setQueryData(
-          BOOKS_QUERY_KEYS.detail(id),
-          response
-        );
-      }
-      
-      // Invalidate status to start polling again
-      queryClient.invalidateQueries({ queryKey: BOOKS_QUERY_KEYS.status(id) });
-    },
-  });
-}
+  // Handlers
+  const updateQuery = useCallback((newQuery: LibraryQuery) => {
+    setQuery(newQuery);
+  }, []);
 
-/**
- * Hook to prefetch books for offline access
- */
-export function usePrefetchBooks() {
-  const queryClient = useQueryClient();
+  const deleteBook = useCallback(async (bookId: string) => {
+    await deleteMutation.mutateAsync(bookId);
+  }, [deleteMutation]);
+
+  const refreshBook = useCallback(async (bookId: string) => {
+    // Invalidate specific book cache
+    queryClient.invalidateQueries({ queryKey: bookQueryKeys.detail(bookId) });
+    
+    // Refetch book details and update cache
+    try {
+      const updatedBook = await fetchBookDetails(bookId);
+      queryClient.setQueryData(
+        bookQueryKeys.list(query),
+        (oldData: Book[] | undefined) => 
+          oldData?.map(book => 
+            book.id === bookId ? updatedBook : book
+          ) || []
+      );
+    } catch (error) {
+      console.error('Failed to refresh book:', error);
+    }
+  }, [queryClient, query]);
 
   return {
-    prefetchBook: (id: string) => {
-      return queryClient.prefetchQuery({
-        queryKey: BOOKS_QUERY_KEYS.detail(id),
-        queryFn: () => booksApi.getBook(id),
-        staleTime: 10 * 60 * 1000,
-      });
+    books,
+    filteredBooks,
+    loading,
+    error: queryError?.message || deleteMutation.error?.message || null,
+    totalBooks: books.length,
+    query,
+    refetch,
+    updateQuery,
+    deleteBook,
+    refreshBook,
+  };
+}
+
+// Individual book hook
+export function useBook(bookId: string) {
+  const queryClient = useQueryClient();
+
+  const {
+    data: book,
+    isLoading: loading,
+    error: queryError,
+    refetch,
+  } = useQuery({
+    queryKey: bookQueryKeys.detail(bookId),
+    queryFn: () => fetchBookDetails(bookId),
+    staleTime: 30000,
+    gcTime: 300000,
+    enabled: !!bookId,
+    retry: 3,
+  });
+
+  const refreshBook = useCallback(async () => {
+    await refetch();
+  }, [refetch]);
+
+  return {
+    book,
+    loading,
+    error: queryError?.message || null,
+    refetch: refreshBook,
+  };
+}
+
+// Hook for processing books (those that need status updates)
+export function useProcessingBooks() {
+  const queryClient = useQueryClient();
+  
+  const {
+    data: processingBooks = [],
+    isLoading: loading,
+  } = useQuery({
+    queryKey: ['books', 'processing'],
+    queryFn: async () => {
+      const books = await fetchBooks();
+      return books.filter(book => 
+        ['processing', 'extracting', 'segmenting', 'generating_audio', 'transcoding'].includes(book.status)
+      );
     },
-    prefetchBookWithChunks: (id: string) => {
-      return queryClient.prefetchQuery({
-        queryKey: BOOKS_QUERY_KEYS.chunks(id),
-        queryFn: () => booksApi.getBookWithChunks(id),
-        staleTime: 10 * 60 * 1000,
-      });
-    },
+    refetchInterval: 5000, // Poll every 5 seconds for processing books
+    refetchOnWindowFocus: true,
+    staleTime: 0, // Always consider stale for real-time updates
+  });
+
+  return {
+    processingBooks,
+    loading,
+    hasProcessingBooks: processingBooks.length > 0,
   };
 } 
