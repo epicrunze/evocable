@@ -71,14 +71,17 @@ services:
     volumes:
       - text_data:/data/text
     depends_on:
-      - storage
-      - redis
-    restart: on-failure
+      storage:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
     healthcheck:
-      test: ["CMD", "python", "-c", "import requests; requests.get('http://storage:8001/health')"]
+      test: ["CMD", "python", "-c", "import asyncio; from main import TextExtractor; extractor = TextExtractor('http://storage:8001', 'redis://redis:6379'); print(asyncio.run(extractor.health_check()))"]
       interval: 60s
       timeout: 10s
       retries: 3
+      start_period: 30s
 
   # Text segmentation service - triggered by ingest completion
   segmenter:
@@ -92,14 +95,17 @@ services:
     volumes:
       - text_data:/data/text:ro
     depends_on:
-      - storage
-      - redis
-    restart: on-failure
+      storage:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import spacy; spacy.load('en_core_web_sm')"]
       interval: 60s
       timeout: 10s
       retries: 3
+      start_period: 30s
 
   # TTS processing service - triggered by segmentation completion
   tts-worker:
@@ -109,20 +115,23 @@ services:
       STORAGE_URL: "http://storage:8001"
       REDIS_URL: "redis://redis:6379"
       QUEUE_NAME: "tts_queue"
-      TTS_MODEL: "tts_models/en/ljspeech/tacotron2-DDC"
+      TTS_MODEL: "tts_models/en/ljspeech/fast_pitch"
       WAV_DATA_PATH: "/data/wav"
     volumes:
       - text_data:/data/text:ro  # Read SSML chunks
       - wav_data:/data/wav       # Write WAV files
     depends_on:
-      - storage
-      - redis
-    restart: on-failure
+      storage:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import torch; print('GPU available:', torch.cuda.is_available())"]
       interval: 60s
       timeout: 30s
       retries: 3
+      start_period: 120s
 
   # Audio transcoding service - triggered by TTS completion
   transcoder:
@@ -138,27 +147,17 @@ services:
       - wav_data:/data/wav:ro
       - segment_data:/data/ogg
     depends_on:
-      - storage
-      - redis
-    restart: on-failure
+      storage:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
     healthcheck:
       test: ["CMD", "ffmpeg", "-version"]
       interval: 60s
       timeout: 10s
       retries: 3
-
-  # Next.js PWA Client
-  client:
-    build: ./pwa-client
-    image: audiobook-client:latest
-    ports:
-      - "3000:3000"
-    environment:
-      API_URL: "http://api:8000"
-      NODE_ENV: "production"
-    depends_on:
-      - api
-    restart: unless-stopped
+      start_period: 30s
 
 volumes:
   text_data:

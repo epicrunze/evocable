@@ -675,6 +675,59 @@ async def delete_book(
         )
 
 
+# ============================================================================
+# Route aliases for frontend compatibility
+# The frontend expects routes at /books/* but our API uses /api/v1/books/*
+# ============================================================================
+
+@app.get("/books")
+async def list_books_alias(
+    sort_by: str = "created_at",
+    sort_order: str = "desc", 
+    token: str = Depends(verify_authentication)
+):
+    """Alias for /api/v1/books - List all books."""
+    return await list_books(token)
+
+
+@app.post("/books/upload", response_model=BookResponse, status_code=status.HTTP_201_CREATED)
+async def upload_book_alias(
+    title: str = Form(..., description="Book title"),
+    format: str = Form(..., description="Book format (pdf, epub, txt)"),
+    file: UploadFile = File(..., description="Book file to process"),
+    token: str = Depends(verify_authentication)
+):
+    """Alias for /api/v1/books - Upload and process a book."""
+    return await submit_book(title, format, file, token)
+
+
+@app.get("/books/{book_id}")
+async def get_book_alias(
+    book_id: str,
+    token: str = Depends(verify_authentication)
+):
+    """Alias for /api/v1/books/{book_id}/status - Get book details."""
+    return await get_book_status(book_id, token)
+
+
+@app.delete("/books/{book_id}")
+async def delete_book_alias(
+    book_id: str,
+    token: str = Depends(verify_authentication)
+):
+    """Alias for /api/v1/books/{book_id} - Delete a book."""
+    return await delete_book(book_id, token)
+
+
+@app.get("/books/{book_id}/chunks")
+async def get_book_chunks_alias(
+    book_id: str,
+    token: str = Depends(verify_authentication)
+):
+    """Alias for /api/v1/books/{book_id}/chunks - Get book audio chunks."""
+    return await list_book_chunks(book_id, token)
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(

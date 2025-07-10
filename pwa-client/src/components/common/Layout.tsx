@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import Link from 'next/link';
 import { useAuthContext } from '@/components/features/auth/AuthProvider';
 import { Button } from '@/components/ui/Button';
 import { 
@@ -26,9 +27,9 @@ export function Layout({ children, currentPage = 'library' }: LayoutProps) {
   };
 
   const navigation = [
-    { name: 'Library', href: '#', key: 'library', icon: BookOpenIcon },
-    { name: 'Upload', href: '#', key: 'upload', icon: UploadIcon },
-    { name: 'Downloads', href: '#', key: 'downloads', icon: DownloadIcon },
+    { name: 'Library', href: '/library', key: 'library', icon: BookOpenIcon },
+    { name: 'Upload', href: '/upload', key: 'upload', icon: UploadIcon },
+    { name: 'Downloads', href: '/downloads', key: 'downloads', icon: DownloadIcon },
   ];
 
   return (
@@ -47,7 +48,7 @@ export function Layout({ children, currentPage = 'library' }: LayoutProps) {
               <div className="hidden md:block">
                 <div className="ml-10 flex items-baseline space-x-4">
                   {navigation.map((item) => (
-                    <a
+                    <Link
                       key={item.key}
                       href={item.href}
                       className={`px-3 py-2 rounded-md text-sm font-medium ${
@@ -57,7 +58,7 @@ export function Layout({ children, currentPage = 'library' }: LayoutProps) {
                       }`}
                     >
                       {item.name}
-                    </a>
+                    </Link>
                   ))}
                 </div>
               </div>
@@ -104,7 +105,7 @@ export function Layout({ children, currentPage = 'library' }: LayoutProps) {
               {navigation.map((item) => {
                 const Icon = item.icon;
                 return (
-                  <a
+                  <Link
                     key={item.key}
                     href={item.href}
                     className={`flex items-center px-3 py-2 rounded-md text-base font-medium ${
@@ -116,7 +117,7 @@ export function Layout({ children, currentPage = 'library' }: LayoutProps) {
                   >
                     <Icon className="h-5 w-5 mr-3" />
                     {item.name}
-                  </a>
+                  </Link>
                 );
               })}
               <div className="border-t pt-4 mt-4">

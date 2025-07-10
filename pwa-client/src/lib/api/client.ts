@@ -91,6 +91,11 @@ export class ApiClient {
     }
   }
 
+  getAuthToken(): string | null {
+    const authHeader = this.defaultHeaders['Authorization'];
+    return authHeader ? authHeader.replace('Bearer ', '') : null;
+  }
+
   private generateRequestId(): string {
     return `req_${Date.now()}_${++this.requestCounter}`;
   }

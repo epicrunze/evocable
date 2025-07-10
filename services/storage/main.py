@@ -297,6 +297,38 @@ async def get_audio_chunks(book_id: str) -> Dict[str, Any]:
         raise HTTPException(status_code=500, detail=f"Failed to get audio chunks: {str(e)}")
 
 
+@app.get("/books/{book_id}/wav-files")
+async def get_wav_files(book_id: str) -> Dict[str, Any]:
+    """Get WAV files for a book from the file system."""
+    try:
+        wav_path = Path(os.getenv("WAV_DATA_PATH", "/data/wav"))
+        book_wav_dir = wav_path / book_id
+        
+        if not book_wav_dir.exists():
+            raise HTTPException(status_code=404, detail=f"WAV files not found for book {book_id}")
+        
+        # Check for metadata file
+        metadata_file = book_wav_dir / "metadata.json"
+        if not metadata_file.exists():
+            raise HTTPException(status_code=404, detail=f"WAV metadata not found for book {book_id}")
+        
+        # Read metadata
+        import json
+        with open(metadata_file, 'r') as f:
+            wav_files = json.load(f)
+        
+        return {
+            "book_id": book_id,
+            "wav_files": wav_files,
+            "total_files": len(wav_files)
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get WAV files: {str(e)}")
+
+
 @app.delete("/books/{book_id}/audio-chunks")
 async def delete_audio_chunks(book_id: str) -> Dict[str, str]:
     """Delete all audio chunks for a book."""

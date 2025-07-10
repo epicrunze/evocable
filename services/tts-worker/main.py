@@ -9,7 +9,7 @@ from typing import Dict, Any, List, Optional
 from pathlib import Path
 from dataclasses import dataclass
 
-import redis
+import redis.asyncio as redis
 import httpx
 import torch
 import soundfile as sf
@@ -175,7 +175,7 @@ class TTSWorker:
         while True:
             try:
                 # Check for new tasks in the queue (blocking with timeout)
-                task_data = self.redis_client.brpop("tts_queue", timeout=30)
+                task_data = await self.redis_client.brpop("tts_queue", timeout=30)
                 
                 if task_data:
                     queue_name, task_json = task_data
@@ -196,7 +196,7 @@ class TTSWorker:
                                 "error": None if success else "TTS generation failed"
                             }
                             
-                            self.redis_client.lpush(
+                            await self.redis_client.lpush(
                                 "tts_completed",
                                 json.dumps(completion_data)
                             )
@@ -215,7 +215,7 @@ class TTSWorker:
                                 "success": False,
                                 "error": str(e)
                             }
-                            self.redis_client.lpush(
+                            await self.redis_client.lpush(
                                 "tts_completed",
                                 json.dumps(completion_data)
                             )
@@ -379,7 +379,7 @@ class TTSWorker:
                 "action": "transcode_audio"
             }
             
-            self.redis_client.lpush("transcode_queue", json.dumps(transcode_task))
+            await self.redis_client.lpush("transcode_queue", json.dumps(transcode_task))
             logger.info(f"Triggered transcoding for book {book_id}")
             
         except Exception as e:
@@ -389,7 +389,7 @@ class TTSWorker:
     async def health_check(self) -> Dict[str, Any]:
         """Health check for the TTS worker."""
         try:
-            self.redis_client.ping()
+            await self.redis_client.ping()
             redis_status = "healthy"
         except Exception as e:
             redis_status = f"unhealthy: {str(e)}"

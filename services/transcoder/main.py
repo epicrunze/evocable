@@ -8,7 +8,7 @@ import subprocess
 from typing import Dict, Any, List, Optional
 from pathlib import Path
 
-import redis
+import redis.asyncio as redis
 import httpx
 
 # Configure logging
@@ -47,7 +47,7 @@ class AudioTranscoder:
         while True:
             try:
                 # Check for new tasks in the queue (blocking with timeout)
-                task_data = self.redis_client.brpop("transcode_queue", timeout=30)
+                task_data = await self.redis_client.brpop("transcode_queue", timeout=30)
                 
                 if task_data:
                     queue_name, task_json = task_data
@@ -68,30 +68,9 @@ class AudioTranscoder:
                                 "error": None if success else "Transcoding failed"
                             }
                             
-                            # If successful, include chunk information for the API to update the database
-                            if success:
-                                try:
-                                    # Read the metadata file we created
-                                    metadata_file = self.ogg_data_path / book_id / "metadata.json"
-                                    if metadata_file.exists():
-                                        with open(metadata_file, 'r') as f:
-                                            chunks_data = json.load(f)
-                                        
-                                        completion_data["total_chunks"] = len(chunks_data)
-                                        completion_data["chunks"] = chunks_data
-                                        logger.info(f"Including {len(chunks_data)} chunks in completion notification")
-                                    else:
-                                        logger.warning(f"Metadata file not found: {metadata_file}")
-                                        completion_data["total_chunks"] = 0
-                                        completion_data["chunks"] = []
-                                except Exception as e:
-                                    logger.error(f"Failed to read chunk metadata for completion: {e}")
-                                    completion_data["total_chunks"] = 0
-                                    completion_data["chunks"] = []
-                            
                             # Send completion notification
-                            self.redis_client.lpush(
-                                "transcode_completed",
+                            await self.redis_client.lpush(
+                                "transcode_completed", 
                                 json.dumps(completion_data)
                             )
                             
@@ -109,7 +88,7 @@ class AudioTranscoder:
                                 "success": False,
                                 "error": str(e)
                             }
-                            self.redis_client.lpush(
+                            await self.redis_client.lpush(
                                 "transcode_completed",
                                 json.dumps(completion_data)
                             )
@@ -117,7 +96,7 @@ class AudioTranscoder:
                             pass
             
             except Exception as e:
-                logger.error(f"Error in transcode queue processing: {e}")
+                logger.error(f"Error in transcoding queue processing: {e}")
                 await asyncio.sleep(10)  # Wait before retrying
     
     async def _transcode_book(self, book_id: str) -> bool:
@@ -167,16 +146,13 @@ class AudioTranscoder:
             return False
     
     async def _get_wav_files(self, book_id: str) -> List[Dict[str, Any]]:
-        """Get WAV file information for a book."""
+        """Get list of WAV files for a book from storage service."""
         try:
-            # Read WAV metadata file
-            wav_metadata_file = self.wav_data_path / book_id / "metadata.json"
-            if not wav_metadata_file.exists():
-                logger.error(f"WAV metadata file not found: {wav_metadata_file}")
-                return []
+            response = await self.http_client.get(f"{self.storage_url}/books/{book_id}/wav-files")
+            response.raise_for_status()
             
-            with open(wav_metadata_file, 'r') as f:
-                wav_files = json.load(f)
+            data = response.json()
+            wav_files = data.get("wav_files", [])
             
             logger.info(f"Found {len(wav_files)} WAV files for book {book_id}")
             return wav_files
@@ -187,15 +163,15 @@ class AudioTranscoder:
     
     async def _transcode_wav_file(self, wav_file_info: Dict[str, Any], output_dir: Path, global_chunk_seq: int) -> List[Dict[str, Any]]:
         """
-        Transcode a single WAV file to segmented Opus format.
+        Transcode a single WAV file to streaming Opus segments.
         
         Args:
-            wav_file_info: WAV file metadata
-            output_dir: Output directory for Opus files
-            global_chunk_seq: Global sequence counter for the current WAV file
+            wav_file_info: WAV file information from storage
+            output_dir: Output directory for OGG files
+            global_chunk_seq: Global sequence counter for chunks
             
         Returns:
-            List of transcoded chunk information
+            List of transcoded chunk metadata
         """
         try:
             wav_file_path = Path(wav_file_info["file_path"])
@@ -245,12 +221,13 @@ class AudioTranscoder:
                 stdout, stderr = await result.communicate()
                 
                 if result.returncode != 0:
-                    logger.error(f"FFmpeg failed for segment {segment_idx}: {stderr.decode()}")
+                    logger.error(f"FFmpeg failed for chunk {chunk_seq}: {stderr.decode()}")
                     return []
                 
                 # Get file size
-                file_size = output_file.stat().st_size if output_file.exists() else 0
+                file_size = output_file.stat().st_size
                 
+                # Create chunk metadata
                 chunk_info = {
                     "seq": chunk_seq,
                     "duration_s": actual_duration,
@@ -262,13 +239,12 @@ class AudioTranscoder:
                 }
                 
                 chunks.append(chunk_info)
-                logger.info(f"Created chunk {chunk_seq}: {output_file.name} ({actual_duration:.2f}s, {file_size} bytes)")
+                logger.info(f"Transcoded chunk {chunk_seq}: {actual_duration:.2f}s, {file_size} bytes")
             
-            logger.info(f"Transcoded WAV file into {len(chunks)} Opus chunks")
             return chunks
             
         except Exception as e:
-            logger.error(f"Failed to transcode WAV file: {e}")
+            logger.error(f"Error transcoding WAV file {wav_file_info['file_path']}: {e}")
             return []
     
     async def _update_chunk_metadata(self, book_id: str, chunks: List[Dict[str, Any]]):
@@ -319,7 +295,7 @@ class AudioTranscoder:
     async def health_check(self) -> Dict[str, Any]:
         """Health check for the transcoder."""
         try:
-            self.redis_client.ping()
+            await self.redis_client.ping()
             redis_status = "healthy"
         except Exception as e:
             redis_status = f"unhealthy: {str(e)}"

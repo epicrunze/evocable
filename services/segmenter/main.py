@@ -1,29 +1,31 @@
-"""Text segmentation service for Audiobook Server."""
+"""Text segmentation service for Audiobook Server.
 
-import os
-import json
+This service segments extracted text into speech-ready chunks with SSML markup.
+It uses spaCy for natural language processing and intelligent sentence boundaries.
+"""
+
 import asyncio
+import json
 import logging
+import os
+import re
 from typing import Dict, Any, List, Optional
-from pathlib import Path
-from dataclasses import dataclass
 
-import redis
+import redis.asyncio as redis
 import httpx
 import spacy
-from spacy.lang.en import English
+from dataclasses import dataclass
 
-# Configure logging
+# Configure structured logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
 
-
 @dataclass
 class TextChunk:
-    """Represents a text chunk with SSML markup."""
+    """Represents a text chunk with metadata."""
     seq: int
     text: str
     ssml: str
@@ -45,6 +47,7 @@ class TextSegmenter:
         except OSError as e:
             logger.error(f"Failed to load spaCy model: {e}")
             # Fallback to basic English tokenizer
+            from spacy.lang.en import English
             self.nlp = English()
             self.nlp.add_pipe('sentencizer')
             logger.warning("Using fallback sentencizer")
@@ -170,7 +173,7 @@ class SegmentationProcessor:
         while True:
             try:
                 # Check for new tasks in the queue (blocking with timeout)
-                task_data = self.redis_client.brpop("segment_queue", timeout=30)
+                task_data = await self.redis_client.brpop("segment_queue", timeout=30)
                 
                 if task_data:
                     queue_name, task_json = task_data
@@ -192,7 +195,7 @@ class SegmentationProcessor:
                                 "error": None if success else "Segmentation failed"
                             }
                             
-                            self.redis_client.lpush(
+                            await self.redis_client.lpush(
                                 "segment_completed",
                                 json.dumps(completion_data)
                             )
@@ -204,16 +207,14 @@ class SegmentationProcessor:
                         
                     except Exception as e:
                         logger.error(f"Error processing segmentation task: {e}")
-                        logger.error(f"Failed JSON content: '{task_json}'")
-                        logger.error(f"JSON repr: {repr(task_json)}")
                         # Send failure notification
                         try:
                             completion_data = {
-                                "book_id": "unknown",
+                                "book_id": task.get("book_id", "unknown"),
                                 "success": False,
                                 "error": str(e)
                             }
-                            self.redis_client.lpush(
+                            await self.redis_client.lpush(
                                 "segment_completed",
                                 json.dumps(completion_data)
                             )
@@ -310,7 +311,7 @@ class SegmentationProcessor:
                 "action": "generate_audio"
             }
             
-            self.redis_client.lpush("tts_queue", json.dumps(tts_task))
+            await self.redis_client.lpush("tts_queue", json.dumps(tts_task))
             logger.info(f"Triggered TTS processing for book {book_id}")
             
         except Exception as e:
@@ -320,7 +321,7 @@ class SegmentationProcessor:
     async def health_check(self) -> Dict[str, Any]:
         """Health check for the segmentation processor."""
         try:
-            self.redis_client.ping()
+            await self.redis_client.ping()
             redis_status = "healthy"
         except Exception as e:
             redis_status = f"unhealthy: {str(e)}"

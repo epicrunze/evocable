@@ -13,7 +13,7 @@ from typing import Dict, Any, Optional, Callable, Union
 from dataclasses import dataclass
 from functools import wraps
 
-import redis
+import redis.asyncio as redis
 import httpx
 import pdfplumber
 import ebooklib
@@ -176,7 +176,7 @@ class TextExtractor:
             }
             task_json = json.dumps(task_data)
             logger.info(f"Sending to segment_queue: {task_json}")
-            self.redis_client.lpush("segment_queue", task_json)
+            await self.redis_client.lpush("segment_queue", task_json)
             logger.info(f"Triggered segmentation for book {book_id}")
         except Exception as e:
             logger.error(f"Failed to trigger segmentation for book {book_id}: {e}")
@@ -185,7 +185,7 @@ class TextExtractor:
     async def health_check(self) -> Dict[str, Any]:
         """Health check for the ingest service."""
         try:
-            self.redis_client.ping()
+            await self.redis_client.ping()
             redis_status = "healthy"
         except Exception as e:
             redis_status = f"unhealthy: {str(e)}"
@@ -212,7 +212,7 @@ async def process_ingest_queue(extractor: TextExtractor):
     while True:
         try:
             # Check for new tasks in the queue
-            task_data = extractor.redis_client.brpop("ingest_queue", timeout=30)
+            task_data = await extractor.redis_client.brpop("ingest_queue", timeout=30)
             
             if task_data:
                 queue_name, task_json = task_data
@@ -235,7 +235,7 @@ async def process_ingest_queue(extractor: TextExtractor):
                             "error": result.error
                         }
                         
-                        extractor.redis_client.lpush(
+                        await extractor.redis_client.lpush(
                             "ingest_completed", 
                             json.dumps(completion_data)
                         )
@@ -254,7 +254,7 @@ async def process_ingest_queue(extractor: TextExtractor):
                             "success": False,
                             "error": str(e)
                         }
-                        extractor.redis_client.lpush(
+                        await extractor.redis_client.lpush(
                             "ingest_completed", 
                             json.dumps(completion_data)
                         )
