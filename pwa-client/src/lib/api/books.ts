@@ -30,7 +30,79 @@ export class BooksApi {
    * Get a book with its audio chunks
    */
   async getBookWithChunks(id: string): Promise<ApiResponse<BookWithChunks>> {
-    return apiClient.get<BookWithChunks>(`/books/${id}/chunks`);
+    try {
+      // Get book data and chunks data separately
+      const [bookResponse, chunksResponse] = await Promise.all([
+        apiClient.get<Book>(`/books/${id}`),
+        apiClient.get<{
+          book_id: string;
+          total_chunks: number;
+          total_duration_s: number;
+          chunks: Array<{
+            seq: number;
+            duration_s: number;
+            url: string;
+            file_size: number | null;
+          }>;
+        }>(`/books/${id}/chunks`)
+      ]);
+
+      if (bookResponse.error || chunksResponse.error) {
+        return {
+          data: undefined,
+          error: bookResponse.error || chunksResponse.error || {
+            code: 'UNKNOWN_ERROR',
+            message: 'Failed to fetch book or chunks',
+            retry: true
+          },
+          loading: false,
+          timestamp: new Date().toISOString()
+        };
+      }
+
+      if (!bookResponse.data || !chunksResponse.data) {
+        return {
+          data: undefined,
+          error: {
+            code: 'NO_DATA',
+            message: 'Book or chunks data not found',
+            retry: true
+          },
+          loading: false,
+          timestamp: new Date().toISOString()
+        };
+      }
+
+      // Combine book data with chunks
+      const bookWithChunks: BookWithChunks = {
+        ...bookResponse.data,
+        chunks: chunksResponse.data.chunks.map(chunk => ({
+          seq: chunk.seq,
+          duration_s: chunk.duration_s,
+          url: chunk.url,
+          file_size: chunk.file_size || 0,
+        })),
+        total_duration_s: chunksResponse.data.total_duration_s,
+      };
+
+      return {
+        data: bookWithChunks,
+        error: undefined,
+        loading: false,
+        timestamp: new Date().toISOString()
+      };
+    } catch (error) {
+      return {
+        data: undefined,
+        error: {
+          code: 'NETWORK_ERROR',
+          message: 'Failed to fetch book with chunks',
+          retry: true
+        },
+        loading: false,
+        timestamp: new Date().toISOString()
+      };
+    }
   }
 
   /**

@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import { useRouter } from 'next/navigation';
 import { Layout } from '@/components/common/Layout';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 
@@ -176,6 +177,8 @@ function ProcessingAlert({ processingBooks }: { processingBooks: number }) {
 }
 
 export function Library() {
+  const router = useRouter();
+  
   const { 
     filteredBooks, 
     loading, 
@@ -194,9 +197,9 @@ export function Library() {
 
   // Handlers
   const handleBookPlay = useCallback((bookId: string) => {
-    // TODO: Navigate to player page
-    console.log('Play book:', bookId);
-  }, []);
+    // Navigate to player page
+    router.push(`/books/${bookId}`);
+  }, [router]);
 
   const handleBookDownload = useCallback((bookId: string) => {
     // TODO: Start download

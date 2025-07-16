@@ -27,10 +27,11 @@ services:
   storage:
     build: ./services/storage
     image: audiobook-storage:latest
+    user: root
     ports:
       - "8001:8001"
     environment:
-      DATABASE_URL: "sqlite:///:memory:"
+      DATABASE_URL: "sqlite:////data/meta/storage.db"
       TEXT_DATA_PATH: "/data/text"
       WAV_DATA_PATH: "/data/wav"
       SEGMENT_DATA_PATH: "/data/ogg"

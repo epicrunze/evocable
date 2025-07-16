@@ -46,6 +46,7 @@ class AudioChunksData(BaseModel):
 
 # Database setup
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///:memory:")
+
 # Only create directories for file-based databases
 if not DATABASE_URL.endswith(":memory:"):
     db_path = DATABASE_URL.replace("sqlite:///", "")
@@ -54,7 +55,6 @@ if not DATABASE_URL.endswith(":memory:"):
         Path(db_dir).mkdir(parents=True, exist_ok=True)
         # Ensure the directory is writable
         os.chmod(db_dir, 0o755)
-        print(f"Database directory created/verified: {db_dir}")
 
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

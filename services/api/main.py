@@ -1,13 +1,21 @@
 """FastAPI application for Audiobook Server API Gateway."""
 
+print("MAIN.PY TOP LEVEL EXECUTED - UNIQUE TEST PRINT")
+
 import os
 import sqlite3
 import asyncio
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from contextlib import asynccontextmanager
+import hmac
+import hashlib
+import time
+from urllib.parse import urlencode
 
-from fastapi import FastAPI, HTTPException, Depends, status, Form, File, UploadFile, BackgroundTasks
+print("DEBUG: Basic imports completed")
+
+from fastapi import FastAPI, HTTPException, Depends, status, Form, File, UploadFile, BackgroundTasks, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -75,6 +83,7 @@ async def lifespan(app: FastAPI):
     await pipeline.cleanup()
     print("Shutdown complete")
 
+print("DEBUG: About to initialize FastAPI app")
 # Initialize FastAPI app
 app = FastAPI(
     title="Audiobook Server API",
@@ -82,6 +91,7 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan
 )
+print("DEBUG: FastAPI app initialized successfully")
 
 # CORS middleware
 app.add_middleware(
@@ -93,18 +103,24 @@ app.add_middleware(
 )
 
 # Redis client
+print("DEBUG: About to create Redis client")
 redis_client = redis.Redis.from_url(
     os.getenv("REDIS_URL", "redis://localhost:6379"),
     decode_responses=True
 )
+print("DEBUG: Redis client created successfully")
 
 # HTTP client for service communication
+print("DEBUG: About to create HTTP client")
 http_client = httpx.AsyncClient()
+print("DEBUG: HTTP client created successfully")
 
 # Database manager
+print("DEBUG: About to create DatabaseManager")
 db_manager = DatabaseManager(
     db_path=os.getenv("DATABASE_PATH", "/data/meta/audiobooks.db")
 )
+print("DEBUG: DatabaseManager created successfully")
 
 
 def verify_authentication(credentials: HTTPAuthorizationCredentials = Depends(security)) -> str:
@@ -125,6 +141,148 @@ def verify_authentication(credentials: HTTPAuthorizationCredentials = Depends(se
         detail="Invalid authentication credentials"
     )
 
+print("DEBUG: verify_authentication function defined")
+
+
+def get_optional_credentials(request: Request) -> Optional[HTTPAuthorizationCredentials]:
+    """Get optional Authorization header credentials."""
+    authorization = request.headers.get("Authorization")
+    if authorization and authorization.startswith("Bearer "):
+        token = authorization.replace("Bearer ", "")
+        return HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
+    return None
+
+print("DEBUG: get_optional_credentials function defined")
+
+def verify_authentication_query(
+    request: Request = Depends(),
+    query_token: str = Query(None, alias="token")
+) -> str:
+    """Verify authentication from Authorization header OR query parameter."""
+    print("[AUTH DEBUG] ===== FUNCTION CALLED =====")
+    print("[AUTH DEBUG] Incoming request headers:", dict(request.headers))
+    print("[AUTH DEBUG] Query token:", query_token)
+    # Try Authorization header first
+    credentials = get_optional_credentials(request)
+    if credentials:
+        token = credentials.credentials
+        print("[AUTH DEBUG] Found Authorization header token:", token)
+        try:
+            payload = session_manager.validate_session_token(token)
+            print("[AUTH DEBUG] Session token payload:", payload)
+            if payload:
+                print("[AUTH DEBUG] Authenticated via session token (header)")
+                return token
+            if session_manager.validate_api_key(token):
+                print("[AUTH DEBUG] Authenticated via API key (header)")
+                return token
+        except Exception as e:
+            print("[AUTH DEBUG] Exception during header token validation:", e)
+    else:
+        print("[AUTH DEBUG] No Authorization header present")
+    # Try query parameter
+    if query_token:
+        print("[AUTH DEBUG] Trying query token:", query_token)
+        try:
+            payload = session_manager.validate_session_token(query_token)
+            print("[AUTH DEBUG] Session token payload (query):", payload)
+            if payload:
+                print("[AUTH DEBUG] Authenticated via session token (query)")
+                return query_token
+            if session_manager.validate_api_key(query_token):
+                print("[AUTH DEBUG] Authenticated via API key (query)")
+                return query_token
+        except Exception as e:
+            print("[AUTH DEBUG] Exception during query token validation:", e)
+    else:
+        print("[AUTH DEBUG] No query token present")
+    print("[AUTH DEBUG] Authentication failed")
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid authentication credentials"
+    )
+
+print("DEBUG: verify_authentication_query function defined")
+
+print("DEBUG: Defining generate_signed_url function")
+def generate_signed_url(book_id: str, chunk_seq: int, token: str, expires_in: int = 3600) -> str:
+    """Generate a signed URL for audio chunk access."""
+    print("DEBUG: generate_signed_url function called")
+    base_url = os.getenv("API_BASE_URL", "http://localhost:8000")
+    endpoint = f"/api/v1/books/{book_id}/chunks/{chunk_seq}"
+    
+    # Create signature payload
+    timestamp = int(time.time())
+    expires_at = timestamp + expires_in
+    
+    # Create signature string
+    signature_data = f"{endpoint}:{expires_at}:{token}"
+    signature = hmac.new(
+        session_manager.secret_key.encode(),
+        signature_data.encode(),
+        hashlib.sha256
+    ).hexdigest()
+    
+    # Build signed URL
+    params = {
+        "expires": expires_at,
+        "signature": signature,
+        "token": token
+    }
+    
+    return f"{base_url}{endpoint}?{urlencode(params)}"
+
+print("DEBUG: generate_signed_url function defined")
+
+def verify_signed_url(request: Request, book_id: str, chunk_seq: int) -> str:
+    """Verify a signed URL and return the authenticated token."""
+    expires = request.query_params.get("expires")
+    signature = request.query_params.get("signature")
+    token = request.query_params.get("token")
+    
+    if not all([expires, signature, token]):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing signed URL parameters"
+        )
+    
+    # Check expiration
+    current_time = int(time.time())
+    if current_time > int(expires):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Signed URL has expired"
+        )
+    
+    # Verify signature
+    endpoint = f"/api/v1/books/{book_id}/chunks/{chunk_seq}"
+    signature_data = f"{endpoint}:{expires}:{token}"
+    expected_signature = hmac.new(
+        session_manager.secret_key.encode(),
+        signature_data.encode(),
+        hashlib.sha256
+    ).hexdigest()
+    
+    if not hmac.compare_digest(signature, expected_signature):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid signature"
+        )
+    
+    # Validate token
+    payload = session_manager.validate_session_token(token)
+    if payload:
+        return token
+    
+    if session_manager.validate_api_key(token):
+        return token
+    
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid authentication token"
+    )
+
+print("DEBUG: verify_signed_url function defined")
 
 @app.get("/health")
 async def health_check() -> Dict[str, Any]:
@@ -176,6 +334,11 @@ async def test_post(data: dict = None) -> Dict[str, Any]:
     }
 
 
+@app.get("/test-route")
+async def test_route():
+    return {"message": "Test route is working"}
+
+
 # Authentication endpoints
 @app.post("/auth/login", response_model=LoginResponse)
 async def login(request: LoginRequest) -> LoginResponse:
@@ -191,7 +354,7 @@ async def login(request: LoginRequest) -> LoginResponse:
         user_id = "admin"  # For now, single admin user
         session_token, expires_at = session_manager.create_session_token(
             user_id, 
-            remember=request.remember
+            remember=request.remember or False
         )
         
         # Get user info
@@ -489,14 +652,60 @@ async def list_book_chunks(
         )
 
 
+@app.post("/api/v1/books/{book_id}/chunks/{seq}/signed-url")
+async def generate_chunk_signed_url(
+    book_id: str,
+    seq: int,
+    expires_in: int = Query(3600, description="URL expiration time in seconds"),
+    token: str = Depends(verify_authentication)
+) -> Dict[str, Any]:
+    """Generate a signed URL for accessing an audio chunk."""
+    print(f"DEBUG: Signed URL endpoint called with book_id={book_id}, seq={seq}, expires_in={expires_in}")
+    try:
+        # Verify book exists
+        book = db_manager.get_book(book_id)
+        if not book:
+            print(f"DEBUG: Book {book_id} not found")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Book with ID {book_id} not found"
+            )
+        
+        print(f"DEBUG: Book {book_id} found, generating signed URL")
+        # Generate signed URL
+        signed_url = generate_signed_url(book_id, seq, token, expires_in)
+        
+        print(f"DEBUG: Generated signed URL: {signed_url}")
+        return {
+            "signed_url": signed_url,
+            "expires_in": expires_in
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"DEBUG: Error generating signed URL: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate signed URL: {str(e)}"
+        )
+
+
 @app.get("/api/v1/books/{book_id}/chunks/{seq}")
 async def get_audio_chunk(
     book_id: str, 
     seq: int,
-    token: str = Depends(verify_authentication)
+    request: Request
 ):
-    """Stream an audio chunk."""
+    """Stream an audio chunk with multiple authentication methods."""
     try:
+        # Try signed URL authentication first
+        if "signature" in request.query_params:
+            token = verify_signed_url(request, book_id, seq)
+        else:
+            # Fallback to query parameter authentication
+            token = verify_authentication_query(request, request.query_params.get("token"))
+        
         # Check if book exists
         book = db_manager.get_book(book_id)
         if not book:
@@ -726,6 +935,50 @@ async def get_book_chunks_alias(
 ):
     """Alias for /api/v1/books/{book_id}/chunks - Get book audio chunks."""
     return await list_book_chunks(book_id, token)
+
+
+@app.post("/books/{book_id}/chunks/{seq}/signed-url")
+async def generate_chunk_signed_url_alias(
+    book_id: str,
+    seq: int,
+    expires_in: int = Query(3600, description="URL expiration time in seconds"),
+    token: str = Depends(verify_authentication)
+) -> Dict[str, Any]:
+    """Alias for /api/v1/books/{book_id}/chunks/{seq}/signed-url - Generate signed URL for audio chunk."""
+    try:
+        # Verify book exists
+        book = db_manager.get_book(book_id)
+        if not book:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Book with ID {book_id} not found"
+            )
+        
+        # Generate signed URL
+        signed_url = generate_signed_url(book_id, seq, token, expires_in)
+        
+        return {
+            "signed_url": signed_url,
+            "expires_in": expires_in
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate signed URL: {str(e)}"
+        )
+
+
+@app.get("/books/{book_id}/chunks/{seq}")
+async def get_audio_chunk_alias(
+    book_id: str, 
+    seq: int,
+    request: Request
+):
+    """Alias for /api/v1/books/{book_id}/chunks/{seq} - Stream audio chunk."""
+    return await get_audio_chunk(book_id, seq, request)
 
 
 if __name__ == "__main__":

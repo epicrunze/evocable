@@ -72,12 +72,32 @@ export class AudioApi {
   }
 
   /**
-   * Get audio chunk stream URL with authentication
+   * Generate a signed URL for accessing an audio chunk
    */
-  getAuthenticatedChunkUrl(bookId: string, chunkIndex: number): string {
+  async generateSignedUrl(bookId: string, chunkIndex: number, expiresIn: number = 3600): Promise<ApiResponse<{ signed_url: string; expires_in: number }>> {
+    const url = `/api/v1/books/${bookId}/chunks/${chunkIndex}/signed-url?expires_in=${expiresIn}`;
+    return apiClient.post<{ signed_url: string; expires_in: number }>(url, {});
+  }
+
+  /**
+   * Get audio chunk stream URL with authentication
+   * Prefers signed URLs when available, falls back to query parameter method
+   */
+  async getAuthenticatedChunkUrl(bookId: string, chunkIndex: number): Promise<string> {
+    try {
+      // Try to generate a signed URL first
+      const response = await this.generateSignedUrl(bookId, chunkIndex);
+      if (response.data?.signed_url) {
+        return response.data.signed_url;
+      }
+    } catch (error) {
+      console.warn('Failed to generate signed URL, falling back to query parameter method:', error);
+    }
+
+    // Fallback to query parameter method
     const token = apiClient['defaultHeaders']['Authorization']?.replace('Bearer ', '');
     const baseUrl = apiClient['baseUrl'];
-    return `${baseUrl}/audio/stream/${bookId}/${chunkIndex}?token=${token}`;
+    return `${baseUrl}/api/v1/books/${bookId}/chunks/${chunkIndex}?token=${token}`;
   }
 
   /**

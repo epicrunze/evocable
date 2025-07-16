@@ -65,15 +65,21 @@ export function useAudio(options: UseAudioOptions = {}): UseAudioReturn {
     staleTime: 5 * 60 * 1000, // 5 minutes
   });
 
-  // Fetch bookmarks
+  // Fetch bookmarks (disabled for now as backend endpoint doesn't exist)
   const { data: bookmarks = [], refetch: refetchBookmarks } = useQuery({
     queryKey: ['bookmarks', bookId],
     queryFn: async () => {
       if (!bookId) return [];
-      const response = await audioApi.getBookmarks(bookId);
-      return response.data;
+      try {
+        const response = await audioApi.getBookmarks(bookId);
+        return response.data || [];
+      } catch (error) {
+        // Bookmarks endpoint doesn't exist yet, return empty array
+        console.log('Bookmarks endpoint not available, using local storage fallback');
+        return [];
+      }
     },
-    enabled: !!bookId,
+    enabled: false, // Disable until backend endpoint is implemented
     staleTime: 30 * 1000, // 30 seconds
   });
 
@@ -141,14 +147,21 @@ export function useAudio(options: UseAudioOptions = {}): UseAudioReturn {
 
   // Load audio chunk
   const loadChunk = useCallback(async (chunkIndex: number) => {
-    if (!book || !audioRef.current || !bookId) return;
+    if (!book || !audioRef.current || !bookId) {
+      console.log('loadChunk: Missing dependencies', { book: !!book, audioRef: !!audioRef.current, bookId });
+      return;
+    }
 
     try {
       const chunk = book.chunks[chunkIndex];
-      if (!chunk) return;
+      if (!chunk) {
+        console.log('loadChunk: Chunk not found', { chunkIndex, totalChunks: book.chunks.length });
+        return;
+      }
 
       currentChunkRef.current = chunkIndex;
       const chunkUrl = audioApi.getAuthenticatedChunkUrl(bookId, chunkIndex);
+      console.log('loadChunk: Loading chunk', { chunkIndex, chunkUrl });
       
       audioRef.current.src = chunkUrl;
       audioRef.current.load();
@@ -162,6 +175,7 @@ export function useAudio(options: UseAudioOptions = {}): UseAudioReturn {
 
       onChunkChange?.(chunkIndex);
     } catch (error) {
+      console.error('loadChunk: Error loading chunk', error);
       const audioError: AudioError = {
         type: 'network',
         message: 'Failed to load audio chunk',
@@ -189,11 +203,17 @@ export function useAudio(options: UseAudioOptions = {}): UseAudioReturn {
   // Playback controls
   const controls: PlaybackControls = {
     play: async () => {
-      if (!audioRef.current) return;
+      if (!audioRef.current) {
+        console.log('play: No audio element');
+        return;
+      }
       
       try {
+        console.log('play: Attempting to play audio');
         await audioRef.current.play();
+        console.log('play: Audio started successfully');
       } catch (error) {
+        console.error('play: Error starting playback', error);
         const audioError: AudioError = {
           type: 'playback',
           message: 'Failed to start playback',
@@ -286,30 +306,10 @@ export function useAudio(options: UseAudioOptions = {}): UseAudioReturn {
     },
   };
 
-  // Initialize audio when book is loaded
-  useEffect(() => {
-    if (book && !isInitialized) {
-      initializeAudio();
-    }
-  }, [book, isInitialized, initializeAudio]);
-
-  // Load first chunk when audio is initialized
-  useEffect(() => {
-    if (isInitialized && book && audioRef.current) {
-      loadChunk(0);
-    }
-  }, [isInitialized, book, loadChunk]);
-
-  // Auto-play if enabled
-  useEffect(() => {
-    if (autoPlay && audioState && !audioState.isPlaying && !audioState.isLoading) {
-      controls.play();
-    }
-  }, [autoPlay, audioState, controls]);
-
   // Initialize audio state
   useEffect(() => {
     if (bookId && !audioState) {
+      console.log('Initializing audio state for bookId:', bookId);
       setAudioState({
         bookId,
         currentChunk: 0,
@@ -325,38 +325,68 @@ export function useAudio(options: UseAudioOptions = {}): UseAudioReturn {
     }
   }, [bookId, audioState, currentError]);
 
-  // Bookmark functions
+  // Initialize audio when book is loaded
+  useEffect(() => {
+    if (book && !isInitialized) {
+      console.log('Initializing audio element for book:', book.title);
+      initializeAudio();
+    }
+  }, [book, isInitialized, initializeAudio]);
+
+  // Load first chunk when audio is initialized
+  useEffect(() => {
+    if (isInitialized && book && audioRef.current) {
+      console.log('Loading first chunk for book:', book.title);
+      loadChunk(0);
+    }
+  }, [isInitialized, book, loadChunk]);
+
+  // Auto-play if enabled
+  useEffect(() => {
+    if (autoPlay && audioState && !audioState.isPlaying && !audioState.isLoading) {
+      controls.play();
+    }
+  }, [autoPlay, audioState, controls]);
+
+  // Local bookmark state (since backend endpoints don't exist yet)
+  const [localBookmarks, setLocalBookmarks] = useState<Bookmark[]>([]);
+
+  // Bookmark functions (using local state for now)
   const addBookmark = useCallback(async (title: string) => {
     if (!bookId || !audioState) return;
 
     try {
-      await audioApi.createBookmark({
+      const newBookmark: Bookmark = {
+        id: `bookmark-${Date.now()}`,
         bookId,
         title,
         time: audioState.currentTime,
         chunk: audioState.currentChunk,
-      });
-      refetchBookmarks();
+        created_at: new Date().toISOString(),
+      };
+      
+      setLocalBookmarks(prev => [...prev, newBookmark]);
+      console.log('Bookmark added locally:', newBookmark);
     } catch (error) {
       console.error('Failed to add bookmark:', error);
     }
-  }, [bookId, audioState, refetchBookmarks]);
+  }, [bookId, audioState]);
 
   const removeBookmark = useCallback(async (id: string) => {
     try {
-      await audioApi.deleteBookmark(id);
-      refetchBookmarks();
+      setLocalBookmarks(prev => prev.filter(b => b.id !== id));
+      console.log('Bookmark removed locally:', id);
     } catch (error) {
       console.error('Failed to remove bookmark:', error);
     }
-  }, [refetchBookmarks]);
+  }, []);
 
   const seekToBookmark = useCallback(async (id: string) => {
-    const bookmark = bookmarks.find(b => b.id === id);
+    const bookmark = localBookmarks.find(b => b.id === id);
     if (!bookmark) return;
 
     await controls.seek(bookmark.time);
-  }, [bookmarks, controls]);
+  }, [localBookmarks, controls]);
 
   // Initialize function
   const initialize = useCallback(async (newBookId: string) => {
@@ -389,7 +419,7 @@ export function useAudio(options: UseAudioOptions = {}): UseAudioReturn {
   return {
     audioState,
     controls,
-    bookmarks,
+    bookmarks: localBookmarks, // Use local bookmarks for now
     isLoading: bookLoading,
     error: bookError ? { 
       type: 'network', 
