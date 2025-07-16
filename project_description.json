@@ -11,7 +11,7 @@
       "api": "FastAPI served by Uvicorn on the RTX 3090 host",
       "ingest": "Extract raw text from PDF via pdfplumber, EPUB via ebooklib, TXT via direct read with chardet; OCR fallback with Tesseract",
       "segmenter": "spaCy English sentence tokenizer plus configurable 800-character chunk assembler with SSML (<s> and <break> tags)",
-      "tts_worker": "FastPitch 2 + HiFiGAN inference container on RTX 3090, outputs 24 kHz WAV",
+      "tts_worker": "Coqui TTS with Tacotron2-DDC model inference container on RTX 3090, outputs 24 kHz WAV",
       "transcoder": "FFmpeg CLI wrapper to convert WAV → Opus@32 kbps in Ogg and segment into 3.14 s files",
       "storage": "Filesystem hierarchy for raw text, WAV, Ogg segments; metadata in SQLite"
     },
@@ -33,7 +33,7 @@
         "ssml_tags": ["<s>", "<break time=\"200ms\"/>"]
       },
       "tts_worker": {
-        "model": "FastPitch 2 for mel spectrogram + HiFiGAN vocoder",
+        "model": "Coqui TTS Tacotron2-DDC for high-quality speech synthesis",
         "output_format": "WAV 24 kHz 16-bit PCM",
         "container": "Docker with singleton model load"
       },
@@ -108,6 +108,6 @@
       "monitoring": "Future Prometheus integration",
       "ci_cd": "GitHub Actions for linting, unit tests, Docker image builds and PWA deployment"
     },
-    "technical_justification": "We chose FastAPI/Uvicorn for low-latency async API on Python, pdfplumber/ebooklib/Tesseract for robust text extraction, spaCy for accurate English sentence splitting, FastPitch+HiFiGAN on RTX 3090 for production-grade TTS, FFmpeg+Opus for minimal bandwidth streaming, SQLite for lightweight metadata, React/Vite for a modern PWA scaffold, and Docker Compose for simple local orchestration. Each tool balances ease of development, performance, and future extensibility."
+    "technical_justification": "We chose FastAPI/Uvicorn for low-latency async API on Python, pdfplumber/ebooklib/Tesseract for robust text extraction, spaCy for accurate English sentence splitting, Coqui TTS Tacotron2-DDC on RTX 3090 for production-grade TTS, FFmpeg+Opus for minimal bandwidth streaming, SQLite for lightweight metadata, React/Vite for a modern PWA scaffold, and Docker Compose for simple local orchestration. Each tool balances ease of development, performance, and future extensibility."
   }
   

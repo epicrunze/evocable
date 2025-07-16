@@ -115,7 +115,7 @@ services:
       STORAGE_URL: "http://storage:8001"
       REDIS_URL: "redis://redis:6379"
       QUEUE_NAME: "tts_queue"
-      TTS_MODEL: "tts_models/en/ljspeech/fast_pitch"
+      TTS_MODEL: "tts_models/en/ljspeech/tacotron2-DDC"
       WAV_DATA_PATH: "/data/wav"
     volumes:
       - text_data:/data/text:ro  # Read SSML chunks
