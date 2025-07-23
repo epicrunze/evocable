@@ -181,3 +181,6 @@ Thumbs.db
 *.bak
 *.backup
 *.old 
+# Docker logs and cache
+docker/logs/
+docker/cache/

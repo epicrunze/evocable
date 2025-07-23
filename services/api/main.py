@@ -15,7 +15,7 @@ from urllib.parse import urlencode
 
 print("DEBUG: Basic imports completed")
 
-from fastapi import FastAPI, HTTPException, Depends, status, Form, File, UploadFile, BackgroundTasks, Query, Request
+from fastapi import FastAPI, HTTPException, Depends, status, Form, File, UploadFile, BackgroundTasks, Query, Request, Path
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -87,17 +87,130 @@ print("DEBUG: About to initialize FastAPI app")
 # Initialize FastAPI app
 app = FastAPI(
     title="Audiobook Server API",
-    description="Convert PDF, EPUB, and TXT files to streaming audiobooks",
+    description="""
+# 🎵 Audiobook Server API
+
+Convert PDF, EPUB, and TXT files into high-quality streaming audiobooks with this comprehensive API.
+
+## 🚀 Features
+
+- **Multi-format Support**: Process PDF, EPUB, and TXT files
+- **AI-Powered Processing**: Advanced text extraction and segmentation
+- **High-Quality Audio**: TTS generation with Opus encoding at 32kbps
+- **Streaming Ready**: Audio chunks optimized for web streaming
+- **Real-time Progress**: Monitor processing status with live updates
+- **Secure Access**: API key and session-based authentication
+- **Production Ready**: Rate limiting, caching, and error handling
+
+## 📊 Processing Pipeline
+
+1. **Upload** → File validation and storage
+2. **Extract** → Text extraction from various formats
+3. **Segment** → Intelligent text chunking for optimal audio
+4. **Generate** → High-quality TTS audio generation
+5. **Transcode** → Opus encoding for web streaming
+6. **Stream** → Chunked audio delivery
+
+## 🔧 Audio Specifications
+
+- **Codec**: Opus in Ogg container
+- **Bitrate**: 32 kbps (optimized for voice)
+- **Chunk Duration**: ~3.14 seconds
+- **Sample Rate**: 22050 Hz
+- **Format**: Streaming-optimized segments
+
+## 🛡️ Authentication
+
+All endpoints require authentication via Bearer token:
+- **API Key**: For service-to-service communication
+- **Session Token**: For user sessions (obtained via /auth/login)
+
+## 📈 Rate Limits
+
+- **General API**: 60 requests/minute
+- **File Uploads**: 10 requests/minute  
+- **Audio Streaming**: 300 requests/minute
+
+## 📝 Usage Examples
+
+### Quick Start
+```bash
+# 1. Submit a book
+curl -X POST "http://server.epicrunze.com/api/v1/books" \\
+  -H "Authorization: Bearer your-api-key" \\
+  -F "title=My Book" \\
+  -F "format=pdf" \\
+  -F "file=@book.pdf"
+
+# 2. Check processing status
+curl -H "Authorization: Bearer your-api-key" \\
+  http://server.epicrunze.com/api/v1/books/{book_id}/status
+
+# 3. List audio chunks when ready
+curl -H "Authorization: Bearer your-api-key" \\
+  http://server.epicrunze.com/api/v1/books/{book_id}/chunks
+
+# 4. Stream audio chunk
+curl -H "Authorization: Bearer your-api-key" \\
+  http://server.epicrunze.com/api/v1/books/{book_id}/chunks/0
+```
+
+For detailed examples and integration guides, see the individual endpoint documentation below.
+    """,
     version="1.0.0",
+    contact={
+        "name": "Audiobook Server API Support",
+        "url": "https://server.epicrunze.com",
+        "email": "support@epicrunze.com"
+    },
+    license_info={
+        "name": "MIT License",
+        "url": "https://opensource.org/licenses/MIT"
+    },
+    servers=[
+        {
+            "url": "http://server.epicrunze.com",
+            "description": "Production server"
+        },
+        {
+            "url": "http://localhost",
+            "description": "Local development server"
+        }
+    ],
+    tags_metadata=[
+        {
+            "name": "Health",
+            "description": "Service health and status monitoring"
+        },
+        {
+            "name": "Authentication", 
+            "description": "User authentication and session management"
+        },
+        {
+            "name": "Books",
+            "description": "Book management and processing operations"
+        },
+        {
+            "name": "Audio",
+            "description": "Audio chunk streaming and playback"
+        },
+        {
+            "name": "Legacy",
+            "description": "Legacy endpoints for backward compatibility"
+        }
+    ],
     lifespan=lifespan
 )
 print("DEBUG: FastAPI app initialized successfully")
 
 # CORS middleware
+cors_origins = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:8000").split(",")
+allow_all_origins = "*" in cors_origins
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=os.getenv("CORS_ORIGINS", "http://localhost:3000").split(","),
-    allow_credentials=True,
+    allow_origins=["*"] if allow_all_origins else cors_origins,
+    allow_credentials=False if allow_all_origins else True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -284,7 +397,63 @@ def verify_signed_url(request: Request, book_id: str, chunk_seq: int) -> str:
 
 print("DEBUG: verify_signed_url function defined")
 
-@app.get("/health")
+@app.get(
+    "/health",
+    tags=["Health"],
+    summary="Check service health",
+    description="""
+    Comprehensive health check for all system components.
+    
+    This endpoint monitors:
+    - **API Service**: Core application status
+    - **Redis**: Message queue and caching system  
+    - **Database**: SQLite metadata storage
+    - **Pipeline**: Background processing services
+    
+    Use this endpoint for:
+    - Load balancer health checks
+    - Monitoring and alerting systems
+    - System diagnostics and troubleshooting
+    
+    **No authentication required** - public health endpoint.
+    """,
+    responses={
+        200: {
+            "description": "Service is healthy",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "status": "healthy",
+                        "service": "api",
+                        "redis": "healthy",
+                        "database": "healthy", 
+                        "pipeline": {
+                            "redis": "healthy",
+                            "database": "healthy",
+                            "pipeline": "ready"
+                        },
+                        "version": "1.0.0"
+                    }
+                }
+            }
+        },
+        503: {
+            "description": "Service is unhealthy",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "status": "unhealthy",
+                        "service": "api",
+                        "redis": "unhealthy: Connection refused",
+                        "database": "healthy",
+                        "pipeline": "unhealthy",
+                        "version": "1.0.0"
+                    }
+                }
+            }
+        }
+    }
+)
 async def health_check() -> Dict[str, Any]:
     """Health check endpoint."""
     try:
@@ -340,7 +509,77 @@ async def test_route():
 
 
 # Authentication endpoints
-@app.post("/auth/login", response_model=LoginResponse)
+@app.post(
+    "/auth/login", 
+    response_model=LoginResponse,
+    tags=["Authentication"],
+    summary="Authenticate and get session token",
+    description="""
+    Exchange an API key for a session token with optional "remember me" functionality.
+    
+    ## Usage
+    
+    Use this endpoint to:
+    - Convert API keys to session tokens for web applications
+    - Enable temporary authentication without exposing API keys
+    - Support "remember me" functionality for extended sessions
+    
+    ## Token Types
+    
+    - **Standard Session**: Expires in 1 hour
+    - **Remember Me Session**: Expires in 30 days
+    
+    ## Security Notes
+    
+    - Session tokens are JWT-based and contain user information
+    - Tokens are signed with a server secret key
+    - Use HTTPS in production to protect tokens in transit
+    """,
+    responses={
+        200: {
+            "description": "Authentication successful",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "sessionToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+                        "expiresAt": "2024-12-31T23:59:59Z",
+                        "user": {
+                            "id": "admin",
+                            "username": "admin",
+                            "role": "administrator"
+                        }
+                    }
+                }
+            }
+        },
+        401: {
+            "description": "Invalid API key",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "detail": "Invalid API key"
+                    }
+                }
+            }
+        },
+        422: {
+            "description": "Invalid request format",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "detail": [
+                            {
+                                "loc": ["body", "apiKey"],
+                                "msg": "field required",
+                                "type": "value_error.missing"
+                            }
+                        ]
+                    }
+                }
+            }
+        }
+    }
+)
 async def login(request: LoginRequest) -> LoginResponse:
     """Authenticate user with API key and return session token."""
     try:
@@ -423,7 +662,95 @@ async def logout(token: str = Depends(verify_authentication)) -> LogoutResponse:
 
 # Book management endpoints
 
-@app.get("/api/v1/books")
+@app.get(
+    "/api/v1/books",
+    tags=["Books"],
+    summary="List all books",
+    description="""
+    Retrieve a list of all books in the system with their current processing status.
+    
+    ## Response Information
+    
+    Each book includes:
+    - **Basic Info**: ID, title, format, creation/update timestamps
+    - **Processing Status**: Current stage and completion percentage
+    - **Metadata**: Total chunks available (if processing complete)
+    - **Error Details**: Error messages if processing failed
+    
+    ## Book Statuses
+    
+    - `pending` - Book uploaded, awaiting processing
+    - `extracting` - Text extraction in progress
+    - `segmenting` - Text chunking and preparation
+    - `generating_audio` - TTS audio generation
+    - `transcoding` - Audio encoding to Opus format
+    - `completed` - Ready for streaming
+    - `failed` - Processing error occurred
+    
+    ## Use Cases
+    
+    - Display book library in web interface
+    - Monitor processing progress across all books
+    - Validate API authentication (returns 401 if invalid)
+    """,
+    responses={
+        200: {
+            "description": "List of books retrieved successfully",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "books": [
+                            {
+                                "id": "550e8400-e29b-41d4-a716-446655440000",
+                                "title": "The Great Gatsby",
+                                "format": "pdf",
+                                "status": "completed",
+                                "percent_complete": 100.0,
+                                "error_message": None,
+                                "file_path": "/data/text/550e8400-e29b-41d4-a716-446655440000/gatsby.pdf",
+                                "created_at": "2024-01-15T10:30:00",
+                                "updated_at": "2024-01-15T10:45:00",
+                                "total_chunks": 42
+                            },
+                            {
+                                "id": "661f8511-f30c-52e5-b827-557766551001",
+                                "title": "Pride and Prejudice", 
+                                "format": "epub",
+                                "status": "generating_audio",
+                                "percent_complete": 65.0,
+                                "error_message": None,
+                                "file_path": "/data/text/661f8511-f30c-52e5-b827-557766551001/pride.epub",
+                                "created_at": "2024-01-15T11:00:00",
+                                "updated_at": "2024-01-15T11:15:00",
+                                "total_chunks": None
+                            }
+                        ]
+                    }
+                }
+            }
+        },
+        401: {
+            "description": "Authentication required",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "detail": "Invalid authentication credentials"
+                    }
+                }
+            }
+        },
+        500: {
+            "description": "Internal server error",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "detail": "Failed to list books: Database connection error"
+                    }
+                }
+            }
+        }
+    }
+)
 async def list_books(token: str = Depends(verify_authentication)):
     """List all books - used for authentication validation."""
     try:
@@ -436,11 +763,126 @@ async def list_books(token: str = Depends(verify_authentication)):
         )
 
 
-@app.post("/api/v1/books", response_model=BookResponse, status_code=status.HTTP_201_CREATED)
+@app.post(
+    "/api/v1/books", 
+    response_model=BookResponse, 
+    status_code=status.HTTP_201_CREATED,
+    tags=["Books"],
+    summary="Upload and process book",
+    description="""
+    Upload a book file and start the automated processing pipeline to convert it into a streaming audiobook.
+    
+    ## Supported Formats
+    
+    - **PDF**: Text-based PDFs with embedded text (not scanned images)
+    - **EPUB**: Standard EPUB format with HTML/XHTML content
+    - **TXT**: Plain text files with UTF-8 encoding
+    
+    ## File Requirements
+    
+    - **Maximum Size**: 50 MB per file
+    - **File Extension**: Must match the specified format
+    - **Content**: Must contain readable text content
+    
+    ## Processing Pipeline
+    
+    After upload, your book goes through these stages:
+    
+    1. **Upload Validation** (Immediate)
+    2. **Text Extraction** (~1-3 minutes)
+    3. **Text Segmentation** (~30 seconds) 
+    4. **Audio Generation** (~2-10 minutes depending on length)
+    5. **Audio Transcoding** (~1-2 minutes)
+    
+    ## Typical Processing Times
+    
+    - **Small book** (<10 pages): 2-5 minutes
+    - **Medium book** (10-50 pages): 5-15 minutes  
+    - **Large book** (>50 pages): 15+ minutes
+    
+    ## Usage Tips
+    
+    - Use descriptive titles for easy identification
+    - Check file format and size before upload
+    - Monitor progress using the status endpoint
+    - Books are processed asynchronously - no need to wait
+    """,
+    responses={
+        201: {
+            "description": "Book uploaded successfully and processing started",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "book_id": "550e8400-e29b-41d4-a716-446655440000",
+                        "status": "pending",
+                        "message": "Book 'The Great Gatsby' submitted successfully for processing"
+                    }
+                }
+            }
+        },
+        400: {
+            "description": "Invalid request - format mismatch, missing file, etc.",
+            "content": {
+                "application/json": {
+                    "examples": {
+                        "format_mismatch": {
+                            "summary": "File extension doesn't match format",
+                            "value": {
+                                "detail": "File extension .txt doesn't match format pdf"
+                            }
+                        },
+                        "no_file": {
+                            "summary": "No file provided",
+                            "value": {
+                                "detail": "No file provided"
+                            }
+                        },
+                        "invalid_format": {
+                            "summary": "Unsupported format",
+                            "value": {
+                                "detail": "Invalid format. Supported formats: pdf, epub, txt"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        413: {
+            "description": "File too large",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "detail": "File too large. Maximum size is 50MB"
+                    }
+                }
+            }
+        },
+        401: {
+            "description": "Authentication required",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "detail": "Invalid authentication credentials"
+                    }
+                }
+            }
+        },
+        500: {
+            "description": "Internal server error during processing",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "detail": "Failed to process book submission: Database connection error"
+                    }
+                }
+            }
+        }
+    }
+)
 async def submit_book(
-    title: str = Form(..., description="Book title"),
-    format: str = Form(..., description="Book format (pdf, epub, txt)"),
-    file: UploadFile = File(..., description="Book file to process"),
+    title: str = Form(..., description="Book title (1-255 characters)", example="The Great Gatsby"),
+    format: str = Form(..., description="Book format", example="pdf", regex="^(pdf|epub|txt)$"),
+    file: UploadFile = File(..., description="Book file to process (max 50MB)"),
     token: str = Depends(verify_authentication)
 ):
     """Submit a book for processing."""
@@ -691,11 +1133,139 @@ async def generate_chunk_signed_url(
         )
 
 
-@app.get("/api/v1/books/{book_id}/chunks/{seq}")
+@app.get(
+    "/api/v1/books/{book_id}/chunks/{seq}",
+    tags=["Audio"],
+    summary="Stream audio chunk",
+    description="""
+    Stream a specific audio chunk from a processed book.
+    
+    ## Audio Format
+    
+    - **Codec**: Opus in Ogg container
+    - **Bitrate**: 32 kbps (optimized for voice)
+    - **Chunk Duration**: ~3.14 seconds per chunk
+    - **Sample Rate**: 22050 Hz
+    
+    ## Authentication Options
+    
+    This endpoint supports two authentication methods:
+    
+    1. **Signed URL**: Use signed URLs for secure, temporary access
+       - Generated via `/api/v1/books/{book_id}/chunks/{seq}/signed-url`
+       - Includes expiration time and signature
+       - Ideal for client-side audio players
+    
+    2. **Authorization Header**: Standard Bearer token authentication
+       - Use API key or session token in Authorization header
+       - Suitable for server-to-server requests
+    
+    ## Usage Examples
+    
+         ### HTML5 Audio Player
+     ```html
+     <audio controls>
+       <source src="http://server.epicrunze.com/api/v1/books/{book_id}/chunks/0?token=your-token" type="audio/ogg">
+     </audio>
+     ```
+     
+     ### JavaScript Fetch
+     ```javascript
+     const response = await fetch(`http://server.epicrunze.com/api/v1/books/{book_id}/chunks/0`, {
+       headers: {
+         'Authorization': 'Bearer your-token'
+       }
+     });
+     const audioBlob = await response.blob();
+     ```
+    
+    ## Caching
+    
+    - Audio chunks are cached for 1 hour
+    - Use ETag headers for conditional requests
+    - Content-Length header provided for progress tracking
+    """,
+    responses={
+        200: {
+            "description": "Audio chunk streamed successfully",
+            "content": {
+                "audio/ogg": {
+                    "example": "Binary audio data (Opus in Ogg container)"
+                }
+            },
+            "headers": {
+                "Content-Type": {
+                    "description": "Always audio/ogg for Opus-encoded chunks"
+                },
+                "Content-Length": {
+                    "description": "Size of the audio chunk in bytes"
+                },
+                "Cache-Control": {
+                    "description": "Caching directives (max-age=3600)"
+                },
+                "ETag": {
+                    "description": "Entity tag for cache validation"
+                }
+            }
+        },
+        404: {
+            "description": "Book or chunk not found",
+            "content": {
+                "application/json": {
+                    "examples": {
+                        "book_not_found": {
+                            "summary": "Book doesn't exist",
+                            "value": {
+                                "detail": "Book with ID 550e8400-e29b-41d4-a716-446655440000 not found"
+                            }
+                        },
+                        "chunk_not_found": {
+                            "summary": "Chunk doesn't exist or book not processed",
+                            "value": {
+                                "detail": "Audio chunk 5 not found for book"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        401: {
+            "description": "Authentication failed",
+            "content": {
+                "application/json": {
+                    "examples": {
+                        "invalid_token": {
+                            "summary": "Invalid authentication token",
+                            "value": {
+                                "detail": "Invalid authentication credentials"
+                            }
+                        },
+                        "expired_signed_url": {
+                            "summary": "Signed URL expired",
+                            "value": {
+                                "detail": "Signed URL has expired"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        500: {
+            "description": "Internal server error during streaming",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "detail": "Failed to stream audio chunk: Storage service unavailable"
+                    }
+                }
+            }
+        }
+    }
+)
 async def get_audio_chunk(
-    book_id: str, 
-    seq: int,
-    request: Request
+    book_id: str = Path(..., description="Unique book identifier", example="550e8400-e29b-41d4-a716-446655440000"), 
+    seq: int = Path(..., description="Chunk sequence number (0-based)", example=0, ge=0),
+    request: Request = Depends()
 ):
     """Stream an audio chunk with multiple authentication methods."""
     try:
@@ -889,10 +1459,16 @@ async def delete_book(
 # The frontend expects routes at /books/* but our API uses /api/v1/books/*
 # ============================================================================
 
-@app.get("/books")
+@app.get(
+    "/books",
+    tags=["Legacy"],
+    summary="List books (legacy)",
+    description="Legacy endpoint for backward compatibility. Use `/api/v1/books` instead.",
+    deprecated=True
+)
 async def list_books_alias(
-    sort_by: str = "created_at",
-    sort_order: str = "desc", 
+    sort_by: str = Query("created_at", description="Sort field"),
+    sort_order: str = Query("desc", description="Sort order (asc/desc)"), 
     token: str = Depends(verify_authentication)
 ):
     """Alias for /api/v1/books - List all books."""

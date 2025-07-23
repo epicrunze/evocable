@@ -12,8 +12,31 @@ from jose import JWTError, jwt
 
 class LoginRequest(BaseModel):
     """Request model for user login."""
-    apiKey: str = Field(..., description="API key for authentication")
-    remember: Optional[bool] = Field(default=False, description="Whether to remember the session")
+    apiKey: str = Field(
+        ..., 
+        description="API key for authentication",
+        example="default-dev-key"
+    )
+    remember: Optional[bool] = Field(
+        default=False, 
+        description="Whether to remember the session (extends expiry to 30 days)",
+        example=False
+    )
+    
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "apiKey": "default-dev-key",
+                    "remember": False
+                },
+                {
+                    "apiKey": "prod-api-key-12345",
+                    "remember": True
+                }
+            ]
+        }
+    }
 
 
 class User(BaseModel):

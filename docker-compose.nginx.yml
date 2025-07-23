@@ -1,0 +1,48 @@
+services:
+  # Nginx reverse proxy
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+      - "443:443"  # For future HTTPS setup
+    volumes:
+      - ./nginx-api-only.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/logs:/var/log/nginx
+      - ./nginx/cache:/var/cache/nginx
+    depends_on:
+      - api
+      - storage
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "nginx", "-t"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    environment:
+      - NGINX_HOST=server.epicrunze.com
+      - NGINX_PORT=80
+
+  # Update API service to not expose ports directly (nginx will handle)
+  api:
+    ports: []  # Remove direct port exposure
+    expose:
+      - "8000"  # Only expose to internal network
+
+  # Update storage service to not expose ports directly  
+  storage:
+    ports: []  # Remove direct port exposure
+    expose:
+      - "8001"  # Only expose to internal network
+
+  # Redis can stay internal only
+  redis:
+    ports: []  # Remove direct port exposure
+    expose:
+      - "6379"
+
+  # Note: PWA Client should be run separately with 'npm run dev' on port 3000
+  # If you want to run it in Docker, create a Dockerfile in pwa-client/ first
+
+volumes:
+  nginx_logs:
+  nginx_cache: 

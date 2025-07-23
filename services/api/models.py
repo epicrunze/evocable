@@ -31,16 +31,74 @@ class BookStatus(str, Enum):
 # Pydantic Models for API
 class BookSubmissionRequest(BaseModel):
     """Request model for book submission."""
-    title: str = Field(..., min_length=1, max_length=255, description="Book title")
-    format: BookFormat = Field(..., description="Book format (pdf, epub, txt)")
+    title: str = Field(
+        ..., 
+        min_length=1, 
+        max_length=255, 
+        description="Book title",
+        example="The Great Gatsby"
+    )
+    format: BookFormat = Field(
+        ..., 
+        description="Book format (pdf, epub, txt)",
+        example=BookFormat.PDF
+    )
     # Note: file will be handled separately via multipart/form-data
+    
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "title": "The Great Gatsby",
+                    "format": "pdf"
+                },
+                {
+                    "title": "Pride and Prejudice", 
+                    "format": "epub"
+                },
+                {
+                    "title": "Alice's Adventures in Wonderland",
+                    "format": "txt"
+                }
+            ]
+        }
+    }
 
 
 class BookResponse(BaseModel):
     """Response model for book submission."""
-    book_id: str = Field(..., description="Unique book identifier")
-    status: BookStatus = Field(..., description="Current processing status")
-    message: str = Field(default="Book submitted successfully", description="Status message")
+    book_id: str = Field(
+        ..., 
+        description="Unique book identifier (UUID)",
+        example="550e8400-e29b-41d4-a716-446655440000"
+    )
+    status: BookStatus = Field(
+        ..., 
+        description="Current processing status", 
+        example=BookStatus.PENDING
+    )
+    message: str = Field(
+        default="Book submitted successfully", 
+        description="Status message",
+        example="Book 'The Great Gatsby' submitted successfully for processing"
+    )
+    
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "book_id": "550e8400-e29b-41d4-a716-446655440000",
+                    "status": "pending",
+                    "message": "Book 'The Great Gatsby' submitted successfully for processing"
+                },
+                {
+                    "book_id": "661f8511-f30c-52e5-b827-557766551001", 
+                    "status": "processing",
+                    "message": "Book 'Pride and Prejudice' is being processed"
+                }
+            ]
+        }
+    }
 
 
 class BookStatusResponse(BaseModel):
