@@ -1,24 +1,23 @@
-# Evocable - Audiobook Generation System
+# Evocable - Audiobook Generation Backend
 
-A comprehensive document-to-audiobook conversion system built with microservices architecture. Transforms PDF, EPUB, and TXT documents into high-quality streaming audiobooks using advanced text-to-speech technology.
+A comprehensive document-to-audiobook conversion system built with microservices architecture. Provides a robust API for converting PDF, EPUB, and TXT documents into high-quality streaming audiobooks using advanced text-to-speech technology.
 
 ## 🚀 Project Overview
 
-Evocable is a production-ready system that converts documents into streaming audiobooks with real-time processing status and advanced audio playback capabilities. Built for scalability and performance with a microservices architecture running on Docker.
+Evocable Backend is a production-ready microservices system that processes documents into streaming audiobooks with real-time status updates. Built for scalability and performance with Docker orchestration, it provides a complete API for external client applications.
 
 ### Key Features
 - **Document Processing**: PDF, EPUB, and TXT to audiobook conversion with OCR fallback
 - **High-Quality TTS**: Coqui TTS with Tacotron2-DDC model for natural speech synthesis
-- **Advanced Audio Streaming**: Chunk-based streaming with seeking and cross-chunk navigation
+- **Advanced Audio Streaming**: Chunk-based streaming API with seeking support
 - **Real-time Status Updates**: Live processing progress with detailed status information
-- **Mobile-Responsive PWA**: Next.js frontend optimized for desktop and mobile
-- **Secure Authentication**: API key-based authentication with persistent sessions
+- **RESTful API**: Complete API for external client integration
+- **Secure Authentication**: API key-based authentication system
 - **Scalable Architecture**: Microservices with Redis message queuing
 
 ## 🏗️ Architecture Overview
 
 ### Technology Stack
-- **Frontend**: Next.js 15 with TypeScript, React Query, Zustand
 - **Backend**: FastAPI with Python microservices
 - **Message Queue**: Redis for service coordination
 - **Text Processing**: spaCy for segmentation, pdfplumber/ebooklib for extraction
@@ -30,8 +29,8 @@ Evocable is a production-ready system that converts documents into streaming aud
 ### System Architecture
 ```
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   Next.js PWA   │    │   FastAPI API   │    │  Redis Message  │
-│   (Frontend)    │◄──►│   Gateway       │◄──►│     Broker      │
+│  External       │    │   FastAPI API   │    │  Redis Message  │
+│  Clients        │◄──►│   Gateway       │◄──►│     Broker      │
 └─────────────────┘    └─────────────────┘    └─────────────────┘
                                 │
                 ┌───────────────┼───────────────┐
@@ -52,16 +51,7 @@ Evocable is a production-ready system that converts documents into streaming aud
 ## 📁 Project Structure
 
 ```
-evocable/
-├── pwa-client/                 # Next.js frontend application
-│   ├── src/
-│   │   ├── app/               # Next.js app router pages
-│   │   ├── components/        # React components
-│   │   ├── hooks/             # Custom React hooks
-│   │   ├── lib/               # API clients and utilities
-│   │   └── types/             # TypeScript type definitions
-│   ├── package.json
-│   └── next.config.ts
+evocable-backend/
 ├── services/                   # Backend microservices
 │   ├── api/                   # FastAPI gateway service
 │   ├── storage/               # Data storage and metadata
@@ -71,8 +61,9 @@ evocable/
 │   └── transcoder/            # Audio format conversion
 ├── tests/                     # Backend API tests
 ├── plans/                     # Project documentation
+├── nginx/                     # Reverse proxy configuration
 ├── docker-compose.yml         # Service orchestration
-└── nginx/                     # Reverse proxy configuration
+└── .cursor/rules/             # Development rules
 ```
 
 ## 🚀 Quick Start
@@ -89,7 +80,7 @@ evocable/
 ```bash
 # 1. Clone the repository
 git clone <repository-url>
-cd evocable
+cd evocable-backend
 
 # 2. Environment configuration
 cp env.example .env
@@ -101,9 +92,9 @@ docker-compose up -d
 # 4. Verify services are running
 docker-compose ps
 
-# 5. Access the application
-# Frontend: http://localhost:3000
-# API: http://localhost:8000
+# 5. Access the API
+# API Gateway: http://localhost:8000
+# API Documentation: http://localhost:8000/docs
 ```
 
 ### Development Setup
@@ -126,35 +117,12 @@ docker-compose down -v
 
 ## 🔧 Services Overview
 
-### Frontend (pwa-client/)
-- **Next.js 15** with TypeScript and Tailwind CSS
-- **React Query** for server state management
-- **Zustand** for client state management
-- **Advanced Audio Player** with cross-chunk seeking
-- **Real-time Status Updates** via polling
-- **Mobile-responsive Design** with PWA capabilities
-
-**Available Commands:**
-```bash
-cd pwa-client/
-npm run dev              # Development server
-npm run build           # Production build
-npm run start           # Production server
-npm run lint            # Code linting
-```
-
 ### API Gateway (services/api/)
 - **FastAPI** with async request handling
 - **Authentication** via API key validation
 - **WebSocket Support** for real-time updates
 - **Background Tasks** for processing coordination
 - **RESTful Endpoints** for all client interactions
-
-**Key Endpoints:**
-- `POST /api/v1/books` - Submit document for processing
-- `GET /api/v1/books/{book_id}/status` - Check processing status
-- `GET /api/v1/books/{book_id}/chunks` - List audio chunks
-- `GET /api/v1/books/{book_id}/chunks/{seq}` - Stream audio chunk
 
 ### Storage Service (services/storage/)
 - **SQLite Database** for metadata management
@@ -191,22 +159,184 @@ npm run lint            # Code linting
 ```
 Document Upload → Text Extraction → Segmentation → TTS Processing → Transcoding → Streaming
      ↓                ↓              ↓             ↓               ↓           ↓
-  [Ingest]      [Segmenter]    [TTS-Worker]   [Transcoder]   [Storage]   [API/Client]
+  [Ingest]      [Segmenter]    [TTS-Worker]   [Transcoder]   [Storage]   [API Client]
 ```
 
-1. **Upload**: Client uploads PDF/EPUB/TXT via drag-and-drop
+1. **Upload**: Client uploads PDF/EPUB/TXT via API
 2. **Extraction**: Document text extracted with fallback to OCR
 3. **Segmentation**: Text split into ~800 character chunks with SSML
 4. **TTS**: High-quality speech synthesis using Tacotron2-DDC
 5. **Transcoding**: WAV converted to streaming-optimized Opus
-6. **Delivery**: Client streams audio with advanced playback controls
+6. **Delivery**: Client streams audio via API endpoints
+
+## 📡 API Reference
+
+### Authentication
+All API requests require authentication via API key:
+```bash
+curl -H "Authorization: Bearer YOUR_API_KEY" \
+     http://localhost:8000/api/v1/books
+```
+
+### Core Endpoints
+
+#### **Submit Document for Processing**
+```http
+POST /api/v1/books
+Content-Type: multipart/form-data
+Authorization: Bearer YOUR_API_KEY
+
+# Form fields:
+# - title: string (optional)
+# - file: PDF/EPUB/TXT file
+# - format: string (pdf|epub|txt)
+```
+
+**Response:**
+```json
+{
+  "book_id": "uuid-string",
+  "status": "processing",
+  "title": "Document Title"
+}
+```
+
+#### **Check Processing Status**
+```http
+GET /api/v1/books/{book_id}/status
+Authorization: Bearer YOUR_API_KEY
+```
+
+**Response:**
+```json
+{
+  "book_id": "uuid-string",
+  "status": "processing|completed|failed",
+  "percent_complete": 75,
+  "current_step": "tts_processing",
+  "error_message": null,
+  "total_chunks": 10,
+  "completed_chunks": 7
+}
+```
+
+#### **List Audio Chunks**
+```http
+GET /api/v1/books/{book_id}/chunks
+Authorization: Bearer YOUR_API_KEY
+```
+
+**Response:**
+```json
+{
+  "book_id": "uuid-string",
+  "total_duration_s": 3600.0,
+  "chunks": [
+    {
+      "seq": 0,
+      "duration_s": 3.14,
+      "url": "/api/v1/books/{book_id}/chunks/0"
+    },
+    // ... more chunks
+  ]
+}
+```
+
+#### **Stream Audio Chunk**
+```http
+GET /api/v1/books/{book_id}/chunks/{seq}
+Authorization: Bearer YOUR_API_KEY
+Accept: audio/ogg
+```
+
+**Response:** Binary Opus audio data in Ogg container
+
+#### **List All Books**
+```http
+GET /api/v1/books
+Authorization: Bearer YOUR_API_KEY
+```
+
+**Response:**
+```json
+{
+  "books": [
+    {
+      "id": "uuid-string",
+      "title": "Book Title",
+      "status": "completed",
+      "created_at": "2024-01-15T10:30:00Z",
+      "total_duration_s": 3600.0
+    }
+    // ... more books
+  ]
+}
+```
+
+### WebSocket Status Updates
+Connect to real-time processing updates:
+```javascript
+const ws = new WebSocket('ws://localhost:8000/ws/books/{book_id}');
+ws.onmessage = (event) => {
+  const status = JSON.parse(event.data);
+  console.log('Processing update:', status);
+};
+```
+
+## 🔧 Client Integration
+
+### CORS Configuration
+The API supports CORS for web clients. Configure allowed origins in environment:
+```bash
+# .env
+CORS_ORIGINS=http://localhost:3000,https://yourapp.com
+```
+
+Or configure programmatically:
+```python
+# services/api/main.py
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["https://yourapp.com"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+```
+
+### API Key Management
+Generate secure API keys for your clients:
+```bash
+# Generate a secure API key
+openssl rand -hex 32
+
+# Set in environment
+API_KEY=your-secure-api-key-here
+```
+
+### Error Handling
+The API returns standard HTTP status codes:
+- **200**: Success
+- **202**: Accepted (processing started)
+- **400**: Bad Request (invalid input)
+- **401**: Unauthorized (invalid API key)
+- **404**: Not Found (book/chunk not found)
+- **500**: Internal Server Error
+
+Example error response:
+```json
+{
+  "detail": "Invalid file format. Supported: PDF, EPUB, TXT",
+  "error_code": "INVALID_FORMAT"
+}
+```
 
 ## 🧪 Testing
 
 ### Current Test Coverage
 - **Backend API Tests**: Comprehensive Python test suite in `tests/`
 - **Service Integration**: Docker Compose health checks
-- **Manual Testing**: Frontend user workflows
+- **End-to-End Testing**: Complete processing pipeline validation
 
 ### Running Tests
 ```bash
@@ -221,23 +351,6 @@ docker-compose exec storage python -m pytest
 # Health check all services
 docker-compose ps
 ```
-
-## 📱 Frontend Features
-
-### Currently Implemented
-- ✅ **API Key Authentication** with persistent sessions
-- ✅ **Drag & Drop Upload** with file validation
-- ✅ **Real-time Processing Status** with progress updates
-- ✅ **Advanced Audio Player** with seeking and chunk navigation
-- ✅ **Book Library** with search and management
-- ✅ **Mobile-Responsive Design** optimized for all devices
-- ✅ **Error Handling** with user-friendly messages
-
-### PWA Features (Planned)
-- 🔄 **Service Worker** for offline caching
-- 🔄 **Background Sync** for processing when online
-- 🔄 **Push Notifications** for processing completion
-- 🔄 **Offline Playback** with downloaded chunks
 
 ## 🔧 Configuration
 
@@ -256,9 +369,8 @@ CHUNK_SIZE_CHARS=800
 SEGMENT_DURATION=3.14
 OPUS_BITRATE=32k
 
-# Development
-NODE_ENV=development
-NEXT_PUBLIC_API_URL=http://localhost:8000
+# CORS Configuration
+CORS_ORIGINS=http://localhost:3000,https://yourapp.com
 ```
 
 ### Docker Compose Services
@@ -296,16 +408,29 @@ docker-compose logs -f
 - **Redis**: Single instance sufficient for current scale (10 users)
 - **API Gateway**: Can be horizontally scaled behind load balancer
 
+### Reverse Proxy Setup
+Use nginx for production deployment:
+```bash
+# Copy nginx configuration
+cp nginx/default.conf /etc/nginx/sites-available/evocable
+
+# Enable site
+ln -s /etc/nginx/sites-available/evocable /etc/nginx/sites-enabled/
+
+# Restart nginx
+systemctl restart nginx
+```
+
 ## 🛠️ Development
 
 ### Adding New Features
-1. **Frontend**: Work in `pwa-client/src/`
-2. **Backend**: Extend `services/api/` or create new service
+1. **API Endpoints**: Extend `services/api/main.py`
+2. **New Services**: Create new service directory with Dockerfile
 3. **Testing**: Add tests to `tests/` directory
-4. **Documentation**: Update relevant files in `plans/`
+4. **Documentation**: Update API documentation
 
 ### Service Communication
-- **REST API**: Client ↔ API Gateway
+- **REST API**: External clients ↔ API Gateway
 - **Redis Queues**: Inter-service messaging
 - **HTTP**: Service-to-service communication
 - **File System**: Shared volumes for data
@@ -349,27 +474,37 @@ docker-compose exec redis redis-cli monitor
 - **[Design Requirements](plans/pwa_design_requirements_plan.md)** - Complete project scope and requirements
 - **[Component Interfaces](plans/component_interfaces.md)** - Development interfaces and contracts  
 - **[Testing Strategy](plans/testing_strategy.md)** - Comprehensive testing approach
-- **[UI Wireframes](plans/pwa_wireframes.md)** - Detailed interface designs
+- **[UI Wireframes](plans/pwa_wireframes.md)** - Interface designs (for reference)
+
+### API Documentation
+- **Interactive Docs**: `http://localhost:8000/docs` (Swagger UI)
+- **OpenAPI Schema**: `http://localhost:8000/openapi.json`
+- **ReDoc**: `http://localhost:8000/redoc`
 
 ### Getting Help
 - **Issues**: Use GitHub Issues for bug reports
 - **Documentation**: Check `plans/` directory for detailed guides
 - **Logs**: Use `docker-compose logs` for debugging
-- **API**: Access interactive docs at `http://localhost:8000/docs`
+- **API Testing**: Use the interactive documentation at `/docs`
 
 ---
 
 ## 🎯 Project Status
 
-**Current Phase**: Production-ready core functionality
+**Current Phase**: Production-ready backend API
 - ✅ **Document Processing**: Full PDF/EPUB/TXT support with OCR
 - ✅ **High-Quality TTS**: Tacotron2-DDC model integration
 - ✅ **Streaming Audio**: Opus-encoded chunk-based delivery
-- ✅ **Web Interface**: Complete Next.js PWA with advanced player
+- ✅ **RESTful API**: Complete API for external client integration
 - ✅ **Authentication**: Secure API key-based access
-- ✅ **Real-time Updates**: Live processing status
-- 🔄 **PWA Features**: Service worker and offline capabilities (planned)
-- 🔄 **Enhanced Testing**: Comprehensive frontend test coverage (planned)
-- 🔄 **Monitoring**: Performance and error tracking (planned)
+- ✅ **Real-time Updates**: Live processing status via REST and WebSocket
+- ✅ **Production Ready**: Docker orchestration with health checks
+- ✅ **Comprehensive Testing**: Backend API test coverage
 
-This system demonstrates a production-grade microservices architecture with modern web technologies, delivering high-quality audiobook generation with an intuitive user experience. 
+## 🔗 Related Projects
+
+- **Evocable PWA**: Frontend client application (separate repository)
+- **Mobile Apps**: iOS/Android clients can integrate via REST API
+- **Third-party Integrations**: Any client supporting HTTP and audio streaming
+
+This backend system provides a robust, scalable foundation for audiobook generation that can support multiple client applications through its comprehensive REST API. 

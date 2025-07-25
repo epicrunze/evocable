@@ -1,25 +1,28 @@
 {
     "objectives_and_scope": {
-      "goal": "Convert user‐provided PDF, EPUB or TXT into streamed English audiobook audio via a Next.js PWA",
+      "goal": "Backend API system to convert user‐provided PDF, EPUB or TXT into streamed English audiobook audio via microservices architecture",
       "hardware": "Single PC with NVIDIA RTX 3090",
       "initial_scale": "Up to 10 users, 1–2 concurrent streams",
       "authentication": "Shared‐secret API key in Authorization: Bearer <API_KEY> header",
-      "retention_policy": "Retain all generated audio chunks indefinitely"
+      "retention_policy": "Retain all generated audio chunks indefinitely",
+      "client_integration": "RESTful API for external client applications (PWA, mobile apps, etc.)"
     },
     "high_level_architecture": {
-      "client": "Next.js PWA with authentication, real-time status, advanced audio player, and Service Worker for caching",
-      "api": "FastAPI served by Uvicorn on the RTX 3090 host",
+      "api": "FastAPI served by Uvicorn on the RTX 3090 host, provides complete REST API for external clients",
       "ingest": "Extract raw text from PDF via pdfplumber, EPUB via ebooklib, TXT via direct read with chardet; OCR fallback with Tesseract",
       "segmenter": "spaCy English sentence tokenizer plus configurable 800-character chunk assembler with SSML (<s> and <break> tags)",
       "tts_worker": "Coqui TTS with Tacotron2-DDC model inference container on RTX 3090, outputs 24 kHz WAV",
       "transcoder": "FFmpeg CLI wrapper to convert WAV → Opus@32 kbps in Ogg and segment into 3.14 s files",
-      "storage": "Filesystem hierarchy for raw text, WAV, Ogg segments; metadata in SQLite"
+      "storage": "Filesystem hierarchy for raw text, WAV, Ogg segments; metadata in SQLite",
+      "client_separation": "Frontend PWA client moved to separate repository for independent deployment and development"
     },
     "core_modules": {
       "api": {
         "framework": "FastAPI",
         "server": "Uvicorn",
-        "auth_middleware": "Validate Authorization header against API_KEY"
+        "auth_middleware": "Validate Authorization header against API_KEY",
+        "cors_support": "Configurable CORS for web clients",
+        "websocket_support": "Real-time processing status updates"
       },
       "ingest": {
         "pdf_extraction": "pdfplumber",
@@ -53,7 +56,8 @@
       "intermediate": "WAV 24 kHz 16-bit PCM",
       "distribution": "Opus in Ogg container at 32 kbps",
       "segment_duration_s": 3.14,
-      "streaming_protocol": "HTTP GET of /chunks/{seq}"
+      "streaming_protocol": "HTTP GET of /chunks/{seq}",
+      "api_integration": "Complete REST API for client applications"
     },
     "rest_api_endpoints": {
       "submit_book": {
@@ -78,36 +82,38 @@
         "path": "/api/v1/books/{book_id}/chunks/{seq}",
         "accept": "audio/ogg",
         "response": "binary Opus data"
+      },
+      "list_books": {
+        "method": "GET",
+        "path": "/api/v1/books",
+        "response": "paginated list of all user books"
+      },
+      "websocket_status": {
+        "path": "/ws/books/{book_id}",
+        "purpose": "real-time processing status updates"
       }
     },
-    "client_stack": {
-      "framework": "Next.js",
-      "scaffold": "Next.js with PWA plugin, TypeScript, Tailwind CSS",
-      "implementation_status": "COMPLETED",
-      "features": [
-        "API key authentication with persistent sessions",
-        "Drag & drop file upload with validation",
-        "Real-time processing status with polling",
-        "Advanced audio player with cross-chunk seeking",
-        "Library management with instant search",
-        "Mobile-responsive design with PWA manifest",
-        "Service Worker for caching (ready for offline implementation)"
+    "client_architecture": {
+      "separation_model": "Backend API in evocable-backend repository, frontend clients in separate repositories",
+      "api_integration": "RESTful API with comprehensive OpenAPI documentation",
+      "supported_clients": [
+        "PWA client (evocable-pwa repository)",
+        "Mobile applications (iOS/Android)",
+        "Third-party integrations",
+        "Custom client applications"
       ],
-      "components": [
-        "LoginForm - API key authentication UI",
-        "BookLibrary - Book listing with search functionality", 
-        "AudioPlayer - Advanced streaming player with seeking",
-        "Layout - Responsive navigation and mobile menu",
-        "Upload page - Drag & drop file interface",
-        "Book detail page - Processing status and audio player"
-      ]
+      "authentication": "API key-based authentication for all client types",
+      "real_time_updates": "WebSocket connections for live processing status",
+      "cors_support": "Configurable CORS origins for web clients"
     },
     "devops_and_next_steps": {
-      "orchestration": "Docker Compose wiring all services on one network with named volumes",
+      "orchestration": "Docker Compose wiring all backend services on one network with named volumes",
       "logging": "File‐based logs for each service",
       "monitoring": "Future Prometheus integration",
-      "ci_cd": "GitHub Actions for linting, unit tests, Docker image builds and PWA deployment"
+      "ci_cd": "GitHub Actions for linting, unit tests, Docker image builds and API deployment",
+      "client_deployment": "Frontend clients deployed independently (Vercel, Netlify, mobile app stores)",
+      "api_documentation": "Interactive Swagger UI at /docs endpoint"
     },
-    "technical_justification": "We chose FastAPI/Uvicorn for low-latency async API on Python, pdfplumber/ebooklib/Tesseract for robust text extraction, spaCy for accurate English sentence splitting, Coqui TTS Tacotron2-DDC on RTX 3090 for production-grade TTS, FFmpeg+Opus for minimal bandwidth streaming, SQLite for lightweight metadata, React/Vite for a modern PWA scaffold, and Docker Compose for simple local orchestration. Each tool balances ease of development, performance, and future extensibility."
+    "technical_justification": "We chose FastAPI/Uvicorn for low-latency async API on Python, pdfplumber/ebooklib/Tesseract for robust text extraction, spaCy for accurate English sentence splitting, Coqui TTS Tacotron2-DDC on RTX 3090 for production-grade TTS, FFmpeg+Opus for minimal bandwidth streaming, SQLite for lightweight metadata, and Docker Compose for simple local orchestration. The backend provides a comprehensive REST API that enables independent development and deployment of multiple client applications. Each tool balances ease of development, performance, and future extensibility while maintaining clean separation between backend processing and client presentation layers."
   }
   

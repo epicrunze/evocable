@@ -203,14 +203,10 @@ For detailed examples and integration guides, see the individual endpoint docume
 )
 print("DEBUG: FastAPI app initialized successfully")
 
-# CORS middleware
-cors_origins = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:8000").split(",")
-allow_all_origins = "*" in cors_origins
-
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"] if allow_all_origins else cors_origins,
-    allow_credentials=False if allow_all_origins else True,
+    allow_origins=[os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:8000").split(",")],
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
