@@ -1,0 +1,217 @@
+---
+description: Service-specific implementation patterns and considerations
+---
+
+# Service-Specific Implementation Patterns
+
+## API Gateway ([services/api/](mdc:services/api/))
+**Role**: Main FastAPI entry point, authentication, request routing
+**Key Files**: [main.py](mdc:services/api/main.py), [auth_models.py](mdc:services/api/auth_models.py)
+
+```python
+# Authentication pattern
+@app.middleware("http")
+async def auth_middleware(request: Request, call_next):
+    if request.url.path.startswith("/api/"):
+        auth_header = request.headers.get("Authorization")
+        if not auth_header or not auth_header.startswith("Bearer "):
+            raise HTTPException(401, "Missing or invalid API key")
+    
+    response = await call_next(request)
+    return response
+
+# Background task pattern for processing
+@app.post("/api/v1/books")
+async def create_book(background_tasks: BackgroundTasks):
+    background_tasks.add_task(trigger_processing_pipeline, book_id)
+    return {"book_id": book_id, "status": "processing"}
+```
+
+## Storage Service ([services/storage/](mdc:services/storage/))
+**Role**: SQLite database management, file system operations
+**Pattern**: Centralized data layer with REST API
+
+```python
+# Database schema management
+class Book(BaseModel):
+    id: str
+    title: str
+    status: BookStatus
+    total_duration_s: float = 0.0
+    chunks: List[AudioChunk] = []
+
+# File system operations
+async def save_audio_chunk(book_id: str, seq: int, audio_data: bytes):
+    chunk_path = f"/data/ogg/{book_id}/chunk_{seq:04d}.ogg"
+    os.makedirs(os.path.dirname(chunk_path), exist_ok=True)
+    with open(chunk_path, "wb") as f:
+        f.write(audio_data)
+```
+
+## Ingest Service ([services/ingest/](mdc:services/ingest/))
+**Role**: Document text extraction with format-specific handlers
+**Pattern**: Strategy pattern for different document types
+
+```python
+# Format-specific extraction
+async def extract_text(file_path: str, format: str) -> str:
+    extractors = {
+        "pdf": extract_pdf_text,
+        "epub": extract_epub_text, 
+        "txt": extract_txt_text
+    }
+    
+    extractor = extractors.get(format)
+    if not extractor:
+        raise ValueError(f"Unsupported format: {format}")
+    
+    try:
+        return await extractor(file_path)
+    except Exception:
+        # Fallback to OCR
+        return await ocr_extract_text(file_path)
+```
+
+## Segmenter Service ([services/segmenter/](mdc:services/segmenter/))
+**Role**: Text chunking with spaCy, SSML generation
+**Pattern**: NLP pipeline with context preservation
+
+```python
+import spacy
+
+# Load English model once
+nlp = spacy.load("en_core_web_sm")
+
+async def segment_text(text: str, chunk_size: int = 800) -> List[str]:
+    doc = nlp(text)
+    chunks = []
+    current_chunk = ""
+    
+    for sent in doc.sents:
+        if len(current_chunk) + len(sent.text) > chunk_size:
+            if current_chunk:
+                chunks.append(add_ssml_tags(current_chunk.strip()))
+                current_chunk = ""
+        current_chunk += sent.text + " "
+    
+    if current_chunk:
+        chunks.append(add_ssml_tags(current_chunk.strip()))
+    
+    return chunks
+
+def add_ssml_tags(text: str) -> str:
+    return f'<s>{text}</s><break time="200ms"/>'
+```
+
+## TTS Worker ([services/tts-worker/](mdc:services/tts-worker/))
+**Role**: GPU-accelerated text-to-speech synthesis
+**Pattern**: Singleton model loading, GPU resource management
+
+```python
+from TTS.api import TTS
+import torch
+
+# Initialize TTS model once (expensive operation)
+class TTSProcessor:
+    def __init__(self):
+        self.tts = None
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+    
+    async def initialize(self):
+        if self.tts is None:
+            self.tts = TTS("tts_models/en/ljspeech/tacotron2-DDC").to(self.device)
+    
+    async def synthesize_speech(self, text: str, output_path: str):
+        await self.initialize()
+        
+        # Generate speech with GPU acceleration
+        self.tts.tts_to_file(
+            text=text,
+            file_path=output_path,
+            gpu=torch.cuda.is_available()
+        )
+
+# Global instance for model reuse
+tts_processor = TTSProcessor()
+```
+
+## Transcoder Service ([services/transcoder/](mdc:services/transcoder/))
+**Role**: Audio format conversion and segmentation
+**Pattern**: FFmpeg subprocess management
+
+```python
+import subprocess
+import asyncio
+
+async def transcode_to_opus(input_wav: str, output_dir: str) -> List[str]:
+    # Convert WAV to Opus with segmentation
+    cmd = [
+        "ffmpeg", 
+        "-i", input_wav,
+        "-c:a", "libopus",
+        "-b:a", "32k",
+        "-f", "segment",
+        "-segment_time", "3.14",
+        "-segment_format", "ogg",
+        f"{output_dir}/chunk_%04d.ogg"
+    ]
+    
+    process = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE
+    )
+    
+    stdout, stderr = await process.communicate()
+    
+    if process.returncode != 0:
+        raise RuntimeError(f"FFmpeg failed: {stderr.decode()}")
+    
+    # Return list of generated chunk files
+    return sorted(glob.glob(f"{output_dir}/chunk_*.ogg"))
+```
+
+## Inter-Service Communication Patterns
+
+### Redis Queue Processing
+```python
+import aioredis
+import json
+
+async def process_service_queue(queue_name: str):
+    redis = aioredis.from_url("redis://redis:6379")
+    
+    while True:
+        # Blocking pop from queue
+        message = await redis.brpop(queue_name, timeout=5)
+        if message:
+            try:
+                data = json.loads(message[1])
+                await process_message(data)
+                
+                # Queue for next service
+                await redis.lpush("next_queue", json.dumps({
+                    "book_id": data["book_id"],
+                    "status": "completed"
+                }))
+            except Exception as e:
+                # Handle processing errors
+                await handle_processing_error(data, str(e))
+```
+
+### Health Check Pattern
+```python
+@app.get("/health")
+async def health_check():
+    # Verify service dependencies
+    checks = {
+        "redis": await check_redis_connection(),
+        "storage": await check_storage_connection(),
+        "gpu": torch.cuda.is_available() if GPU_REQUIRED else True
+    }
+    
+    if all(checks.values()):
+        return {"status": "healthy", "checks": checks}
+    else:
+        raise HTTPException(503, {"status": "unhealthy", "checks": checks})
+```

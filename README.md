@@ -1,63 +1,78 @@
-# Audiobook PWA - Modular Development Project
+# Evocable - Audiobook Generation System
 
-A comprehensive Next.js Progressive Web App for audiobook generation and streaming, built with a modular architecture for parallel development and maximum maintainability.
+A comprehensive document-to-audiobook conversion system built with microservices architecture. Transforms PDF, EPUB, and TXT documents into high-quality streaming audiobooks using advanced text-to-speech technology.
 
 ## 🚀 Project Overview
 
-This project transforms documents (PDF, EPUB, TXT) into streaming audiobooks with full offline support, optimized for iOS and desktop environments. The architecture prioritizes clean stakeholder communication, robust offline behavior, and scalable modular design.
+Evocable is a production-ready system that converts documents into streaming audiobooks with real-time processing status and advanced audio playback capabilities. Built for scalability and performance with a microservices architecture running on Docker.
 
 ### Key Features
-- **Secure Authentication**: Session-based API key management
-- **Document Processing**: PDF, EPUB, and TXT to audiobook conversion
-- **Advanced Audio Streaming**: MSE-based streaming with adaptive prefetching
-- **Offline-First Architecture**: Full offline support with IndexedDB storage
-- **iOS Optimization**: 50MB cache limits, gesture-based playback
-- **Comprehensive Testing**: Unit, integration, and E2E testing
-- **Performance Monitoring**: Real-time performance and error tracking
-
-## 📋 Documentation Structure
-
-### Core Planning Documents
-- **[Design Requirements & Implementation Plan](plans/pwa_design_requirements_plan.md)** - Complete project scope, requirements, and phased implementation
-- **[Enhanced Wireframes & UI States](plans/pwa_wireframes.md)** - Detailed wireframes for all pages and states
-- **[API Documentation](API_DOCUMENTATION.md)** - Backend API reference and integration guide
-
-### Technical Architecture
-- **[Component Interface Specification](plans/component_interfaces.md)** - Standardized interfaces for parallel development
-- **[Testing Strategy & Quality Assurance](plans/testing_strategy.md)** - Comprehensive testing approach and quality gates
-- **[Development Workflow & Deployment](plans/development_workflow.md)** - Complete development process and CI/CD pipeline
+- **Document Processing**: PDF, EPUB, and TXT to audiobook conversion with OCR fallback
+- **High-Quality TTS**: Coqui TTS with Tacotron2-DDC model for natural speech synthesis
+- **Advanced Audio Streaming**: Chunk-based streaming with seeking and cross-chunk navigation
+- **Real-time Status Updates**: Live processing progress with detailed status information
+- **Mobile-Responsive PWA**: Next.js frontend optimized for desktop and mobile
+- **Secure Authentication**: API key-based authentication with persistent sessions
+- **Scalable Architecture**: Microservices with Redis message queuing
 
 ## 🏗️ Architecture Overview
 
 ### Technology Stack
-- **Framework**: Next.js 14 with TypeScript
-- **State Management**: React Query (server) + Zustand (client)
-- **Styling**: Tailwind CSS with custom design system
-- **PWA**: Workbox with custom service worker strategies
-- **Storage**: Dexie.js for IndexedDB with migration support
-- **Audio**: Web Audio API with MSE for advanced streaming
-- **Testing**: Jest, React Testing Library, Playwright for E2E
+- **Frontend**: Next.js 15 with TypeScript, React Query, Zustand
+- **Backend**: FastAPI with Python microservices
+- **Message Queue**: Redis for service coordination
+- **Text Processing**: spaCy for segmentation, pdfplumber/ebooklib for extraction
+- **Text-to-Speech**: Coqui TTS with Tacotron2-DDC model
+- **Audio Processing**: FFmpeg for WAV to Opus transcoding
+- **Storage**: SQLite for metadata, filesystem for audio chunks
+- **Deployment**: Docker Compose orchestration
 
-### Modular Structure
+### System Architecture
 ```
-src/
-├── app/                     # Next.js app router
-│   ├── (auth)/             # Authentication routes
-│   ├── (dashboard)/        # Main application routes
-│   └── layout.tsx          # Root layout
-├── components/
-│   ├── ui/                 # Reusable UI components
-│   ├── features/           # Feature-specific components
-│   └── common/            # Common components (error boundaries, layouts)
-├── lib/
-│   ├── api/               # API client and types
-│   ├── auth/              # Authentication logic
-│   ├── audio/             # Audio streaming utilities
-│   ├── storage/           # IndexedDB management
-│   └── utils/             # Common utilities
-├── hooks/                 # Custom React hooks
-├── stores/               # Zustand stores
-└── types/                # TypeScript type definitions
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   Next.js PWA   │    │   FastAPI API   │    │  Redis Message  │
+│   (Frontend)    │◄──►│   Gateway       │◄──►│     Broker      │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+                                │
+                ┌───────────────┼───────────────┐
+                │               │               │
+        ┌───────▼──────┐ ┌──────▼──────┐ ┌────▼─────┐
+        │   Storage    │ │   Ingest    │ │Segmenter │
+        │   Service    │ │  Service    │ │ Service  │
+        └──────────────┘ └─────────────┘ └──────────┘
+                                │
+                ┌───────────────┼───────────────┐
+                │               │               │
+        ┌───────▼──────┐ ┌──────▼──────────────────┐
+        │ TTS Worker   │ │    Transcoder           │
+        │ (GPU-based)  │ │    Service              │
+        └──────────────┘ └─────────────────────────┘
+```
+
+## 📁 Project Structure
+
+```
+evocable/
+├── pwa-client/                 # Next.js frontend application
+│   ├── src/
+│   │   ├── app/               # Next.js app router pages
+│   │   ├── components/        # React components
+│   │   ├── hooks/             # Custom React hooks
+│   │   ├── lib/               # API clients and utilities
+│   │   └── types/             # TypeScript type definitions
+│   ├── package.json
+│   └── next.config.ts
+├── services/                   # Backend microservices
+│   ├── api/                   # FastAPI gateway service
+│   ├── storage/               # Data storage and metadata
+│   ├── ingest/                # Document text extraction
+│   ├── segmenter/             # Text chunking and SSML
+│   ├── tts-worker/            # Text-to-speech processing
+│   └── transcoder/            # Audio format conversion
+├── tests/                     # Backend API tests
+├── plans/                     # Project documentation
+├── docker-compose.yml         # Service orchestration
+└── nginx/                     # Reverse proxy configuration
 ```
 
 ## 🚀 Quick Start
@@ -65,262 +80,296 @@ src/
 ### Prerequisites
 ```bash
 # Required tools
-- Node.js 18+ (with npm 9+)
+- Docker 24+ with Docker Compose
 - Git 2.30+
-- Docker 24+ (for local services)
+- NVIDIA GPU with CUDA support (for TTS)
 ```
 
-### Installation
+### Installation & Setup
 ```bash
-# 1. Clone repository
+# 1. Clone the repository
 git clone <repository-url>
-cd audiobook-pwa
-npm install
+cd evocable
 
-# 2. Environment setup
-cp .env.example .env.local
-# Edit .env.local with your configuration
+# 2. Environment configuration
+cp env.example .env
+# Edit .env with your API_KEY and configuration
 
-# 3. Start development services
-docker-compose up -d  # Start backend services
-npm run dev           # Start Next.js development server
+# 3. Start all services
+docker-compose up -d
 
-# 4. Verify setup
-npm run test:unit     # Run unit tests
-npm run lint          # Check code quality
-npm run type-check    # Verify TypeScript
+# 4. Verify services are running
+docker-compose ps
+
+# 5. Access the application
+# Frontend: http://localhost:3000
+# API: http://localhost:8000
 ```
 
-### Development Commands
+### Development Setup
 ```bash
+# Start services in development mode
+docker-compose up --build
+
+# View logs from all services
+docker-compose logs -f
+
+# View logs from specific service
+docker-compose logs -f api
+
+# Stop all services
+docker-compose down
+
+# Reset all data
+docker-compose down -v
+```
+
+## 🔧 Services Overview
+
+### Frontend (pwa-client/)
+- **Next.js 15** with TypeScript and Tailwind CSS
+- **React Query** for server state management
+- **Zustand** for client state management
+- **Advanced Audio Player** with cross-chunk seeking
+- **Real-time Status Updates** via polling
+- **Mobile-responsive Design** with PWA capabilities
+
+**Available Commands:**
+```bash
+cd pwa-client/
+npm run dev              # Development server
+npm run build           # Production build
+npm run start           # Production server
+npm run lint            # Code linting
+```
+
+### API Gateway (services/api/)
+- **FastAPI** with async request handling
+- **Authentication** via API key validation
+- **WebSocket Support** for real-time updates
+- **Background Tasks** for processing coordination
+- **RESTful Endpoints** for all client interactions
+
+**Key Endpoints:**
+- `POST /api/v1/books` - Submit document for processing
+- `GET /api/v1/books/{book_id}/status` - Check processing status
+- `GET /api/v1/books/{book_id}/chunks` - List audio chunks
+- `GET /api/v1/books/{book_id}/chunks/{seq}` - Stream audio chunk
+
+### Storage Service (services/storage/)
+- **SQLite Database** for metadata management
+- **File System Management** for audio chunks
+- **Book State Tracking** throughout processing pipeline
+- **Chunk Duration Calculation** and indexing
+
+### Document Ingestion (services/ingest/)
+- **PDF Processing** via pdfplumber with OCR fallback
+- **EPUB Processing** via ebooklib and BeautifulSoup
+- **TXT Processing** with automatic encoding detection
+- **Tesseract OCR** for image-based PDF content
+
+### Text Segmentation (services/segmenter/)
+- **spaCy English Model** for sentence tokenization
+- **Smart Chunking** to ~800 character segments
+- **SSML Generation** with pause and emphasis tags
+- **Context-Aware Splitting** to preserve meaning
+
+### TTS Worker (services/tts-worker/)
+- **Coqui TTS** with Tacotron2-DDC model
+- **GPU Acceleration** via CUDA (RTX 3090)
+- **High-Quality Output** at 24kHz 16-bit WAV
+- **Singleton Model Loading** for efficiency
+
+### Audio Transcoding (services/transcoder/)
+- **FFmpeg Processing** for format conversion
+- **Opus Encoding** at 32kbps in Ogg container
+- **Fixed Segment Duration** (3.14 seconds)
+- **Optimized for Streaming** with low latency
+
+## 🎵 Audio Processing Pipeline
+
+```
+Document Upload → Text Extraction → Segmentation → TTS Processing → Transcoding → Streaming
+     ↓                ↓              ↓             ↓               ↓           ↓
+  [Ingest]      [Segmenter]    [TTS-Worker]   [Transcoder]   [Storage]   [API/Client]
+```
+
+1. **Upload**: Client uploads PDF/EPUB/TXT via drag-and-drop
+2. **Extraction**: Document text extracted with fallback to OCR
+3. **Segmentation**: Text split into ~800 character chunks with SSML
+4. **TTS**: High-quality speech synthesis using Tacotron2-DDC
+5. **Transcoding**: WAV converted to streaming-optimized Opus
+6. **Delivery**: Client streams audio with advanced playback controls
+
+## 🧪 Testing
+
+### Current Test Coverage
+- **Backend API Tests**: Comprehensive Python test suite in `tests/`
+- **Service Integration**: Docker Compose health checks
+- **Manual Testing**: Frontend user workflows
+
+### Running Tests
+```bash
+# Backend API tests
+cd tests/
+python run_tests.py
+
+# Individual service testing
+docker-compose exec api python -m pytest
+docker-compose exec storage python -m pytest
+
+# Health check all services
+docker-compose ps
+```
+
+## 📱 Frontend Features
+
+### Currently Implemented
+- ✅ **API Key Authentication** with persistent sessions
+- ✅ **Drag & Drop Upload** with file validation
+- ✅ **Real-time Processing Status** with progress updates
+- ✅ **Advanced Audio Player** with seeking and chunk navigation
+- ✅ **Book Library** with search and management
+- ✅ **Mobile-Responsive Design** optimized for all devices
+- ✅ **Error Handling** with user-friendly messages
+
+### PWA Features (Planned)
+- 🔄 **Service Worker** for offline caching
+- 🔄 **Background Sync** for processing when online
+- 🔄 **Push Notifications** for processing completion
+- 🔄 **Offline Playback** with downloaded chunks
+
+## 🔧 Configuration
+
+### Environment Variables
+```bash
+# Core Configuration
+API_KEY=your-secure-api-key-here
+REDIS_URL=redis://redis:6379
+
+# Service URLs (Docker internal)
+STORAGE_URL=http://storage:8001
+
+# TTS Configuration
+TTS_MODEL=tts_models/en/ljspeech/tacotron2-DDC
+CHUNK_SIZE_CHARS=800
+SEGMENT_DURATION=3.14
+OPUS_BITRATE=32k
+
 # Development
-npm run dev              # Start development server
-npm run build           # Build for production
-npm run start           # Start production server
-
-# Testing
-npm run test:unit       # Run unit tests
-npm run test:integration # Run integration tests
-npm run test:e2e        # Run end-to-end tests
-npm run test:all        # Run all tests
-
-# Code Quality
-npm run lint            # Run ESLint
-npm run lint:fix        # Fix linting issues
-npm run type-check      # TypeScript type checking
-npm run format          # Format code with Prettier
-
-# Analysis
-npm run analyze         # Bundle analysis
-npm run lighthouse      # Performance audit
+NODE_ENV=development
+NEXT_PUBLIC_API_URL=http://localhost:8000
 ```
 
-## 📊 Development Phases
-
-### Phase 1: Core Foundation (1 week)
-**Parallel Development Modules:**
-- **Module 1A**: Authentication System
-- **Module 1B**: Basic UI Framework
-- **Module 1C**: API Client Foundation
-- **Module 1D**: Navigation & Routing
-
-### Phase 2: Core Features (1 week)
-**Parallel Development Modules:**
-- **Module 2A**: Library Management
-- **Module 2B**: File Upload System
-- **Module 2C**: Basic Audio Player
-- **Module 2D**: Data Management
-
-### Phase 3: Advanced Audio & Offline (1 week)
-**Parallel Development Modules:**
-- **Module 3A**: Advanced Audio Streaming
-- **Module 3B**: Offline-First Architecture
-- **Module 3C**: Service Worker Implementation
-- **Module 3D**: Downloads Manager
-
-### Phase 4: Advanced Features (1 week)
-**Parallel Development Modules:**
-- **Module 4A**: Enhanced Player Features
-- **Module 4B**: Advanced Error Handling
-- **Module 4C**: Performance Optimizations
-- **Module 4D**: Analytics & Monitoring
-
-### Phase 5: Polish & Testing (3 days)
-**Parallel Development Modules:**
-- **Module 5A**: Design System Refinement
-- **Module 5B**: Accessibility & Testing
-- **Module 5C**: Platform Optimizations
-
-### Phase 6: Deployment & CI/CD (3 days)
-**Parallel Development Modules:**
-- **Module 6A**: Comprehensive Testing
-- **Module 6B**: Deployment & CI/CD
-
-## 🧪 Testing Strategy
-
-### Test Distribution
-- **Unit Tests (70%)**: Individual functions, hooks, and utilities
-- **Integration Tests (20%)**: Component interactions and API integration
-- **End-to-End Tests (10%)**: Complete user workflows
-
-### Quality Gates
-- **Code Coverage**: 80% minimum for critical paths
-- **Performance**: Bundle size < 500KB, TTI < 3s
-- **Accessibility**: WCAG 2.1 AA compliance
-- **Security**: Regular vulnerability scans
-
-### Test Commands
-```bash
-# Run specific test types
-npm run test:unit -- --testPathPattern=auth
-npm run test:integration -- --testPathPattern=library
-npm run test:e2e -- --grep="audio player"
-
-# Coverage reporting
-npm run test:unit -- --coverage
-npm run test:integration -- --coverage
-```
-
-## 🎨 UI/UX Features
-
-### Design System
-- **Color Palette**: `#FFFBDE`, `#90D1CA`, `#129990`, `#096B68`
-- **Typography**: System fonts with accessibility optimizations
-- **Responsive Design**: Mobile-first approach with fluid grids
-- **Accessibility**: Screen reader support, keyboard navigation
-
-### Key UI States
-- **Loading States**: Skeleton components and progress indicators
-- **Empty States**: Helpful guidance for new users
-- **Error States**: Recoverable error messages with retry options
-- **Offline States**: Graceful degradation with offline functionality
-
-## 🔄 CI/CD Pipeline
-
-### Automated Workflows
-- **Code Quality**: ESLint, TypeScript, Prettier
-- **Testing**: Unit, integration, and E2E tests
-- **Security**: Dependency audits and vulnerability scanning
-- **Performance**: Bundle analysis and Lighthouse audits
-- **Deployment**: Automated staging and production deployments
-
-### Quality Checks
+### Docker Compose Services
 ```yaml
-# Example quality gate
-- Code coverage > 80%
-- Bundle size < 500KB
-- Performance score > 90
-- Accessibility score > 95
-- Security audit passes
+# View complete configuration
+cat docker-compose.yml
+
+# Key services:
+# - api: FastAPI gateway (port 8000)
+# - storage: Data management (port 8001)  
+# - redis: Message broker (port 6379)
+# - ingest: Document processing
+# - segmenter: Text chunking
+# - tts-worker: Speech synthesis (GPU)
+# - transcoder: Audio conversion
 ```
 
-## 📱 Progressive Web App Features
+## 🚀 Deployment
 
-### Core PWA Capabilities
-- **Service Worker**: Advanced caching strategies
-- **Offline Support**: Full functionality without network
-- **Install Prompt**: Native app-like installation
-- **Background Sync**: Automatic synchronization when online
-
-### iOS Optimizations
-- **Cache Management**: 50MB limit awareness
-- **Gesture Playback**: Touch-based audio control
-- **Lifecycle Management**: Proper background handling
-- **Safari Support**: Full compatibility with iOS Safari
-
-## 🔧 Performance Optimizations
-
-### Load Performance
-- **Code Splitting**: Route and feature-based splitting
-- **Lazy Loading**: Defer non-critical components
-- **Image Optimization**: Next.js Image component
-- **Bundle Analysis**: Regular size monitoring
-
-### Runtime Performance
-- **Memory Management**: Efficient audio buffer handling
-- **Network Optimization**: Adaptive streaming quality
-- **Caching Strategy**: Multi-level caching system
-- **Audio Prefetching**: Intelligent chunk preloading
-
-## 🛠️ Development Guidelines
-
-### Code Standards
-- **TypeScript**: Strict type checking enabled
-- **ESLint**: Extended configuration with React rules
-- **Prettier**: Consistent code formatting
-- **Testing**: Test-driven development approach
-
-### Branch Strategy
+### Production Deployment
 ```bash
-# Branch naming convention
-feature/module-name-description
-bugfix/issue-description
-hotfix/critical-fix-description
+# Build production images
+docker-compose -f docker-compose.yml build
 
-# Example workflow
-git checkout -b feature/audio-player-controls
-git commit -m "feat(audio): add playback controls with keyboard shortcuts"
-git push origin feature/audio-player-controls
+# Start in production mode
+docker-compose -f docker-compose.yml up -d
+
+# Monitor logs
+docker-compose logs -f
 ```
 
-## 📈 Monitoring & Analytics
+### Scaling Considerations
+- **TTS Worker**: Requires NVIDIA GPU with CUDA
+- **Storage**: Uses local filesystem, consider network storage for scale
+- **Redis**: Single instance sufficient for current scale (10 users)
+- **API Gateway**: Can be horizontally scaled behind load balancer
 
-### Performance Monitoring
-- **Real-time Metrics**: Load time, memory usage, error rates
-- **User Analytics**: Playback patterns, feature usage
-- **Error Tracking**: Comprehensive error reporting
-- **Performance Budgets**: Automated alerts for degradation
+## 🛠️ Development
 
-### Key Metrics
-- **Time to Interactive**: < 3 seconds
-- **First Contentful Paint**: < 1.5 seconds
-- **Memory Usage**: < 100MB baseline
-- **Error Rate**: < 0.1% of user sessions
+### Adding New Features
+1. **Frontend**: Work in `pwa-client/src/`
+2. **Backend**: Extend `services/api/` or create new service
+3. **Testing**: Add tests to `tests/` directory
+4. **Documentation**: Update relevant files in `plans/`
 
-## 🤝 Contributing
+### Service Communication
+- **REST API**: Client ↔ API Gateway
+- **Redis Queues**: Inter-service messaging
+- **HTTP**: Service-to-service communication
+- **File System**: Shared volumes for data
 
-### Development Workflow
-1. **Interface Definition**: Define module interfaces first
-2. **Mock Implementation**: Create mocks for parallel development
-3. **Test Writing**: Write tests before implementation
-4. **Implementation**: Build module following interface
-5. **Integration**: Test module integration
-6. **Review**: Code review and quality checks
+### Monitoring & Debugging
+```bash
+# Service health
+docker-compose ps
 
-### Pull Request Process
-1. Create feature branch from `main`
-2. Implement changes with tests
-3. Run full test suite
-4. Create pull request with description
-5. Address review feedback
-6. Merge after approval
+# View all logs
+docker-compose logs -f
 
-## 📞 Support & Resources
+# Service-specific logs
+docker-compose logs -f tts-worker
 
-### Documentation
-- **API Reference**: Complete backend API documentation
-- **Component Library**: Storybook component documentation
-- **Testing Guide**: Comprehensive testing strategies
-- **Deployment Guide**: Complete deployment procedures
+# Enter service container
+docker-compose exec api bash
+
+# Redis monitoring
+docker-compose exec redis redis-cli monitor
+```
+
+## 📊 Performance
+
+### Current Specifications
+- **Hardware**: Single PC with NVIDIA RTX 3090
+- **Concurrent Users**: Up to 10 users, 1-2 concurrent streams
+- **TTS Processing**: ~2-3x real-time on RTX 3090
+- **Audio Quality**: 24kHz synthesis → 32kbps Opus streaming
+- **Segment Duration**: 3.14 seconds for optimal streaming
+
+### Optimization Features
+- **GPU Acceleration**: TTS processing on CUDA
+- **Chunk-based Streaming**: Immediate playback start
+- **Audio Compression**: Opus codec for bandwidth efficiency
+- **Caching**: Redis for metadata and processing state
+
+## 📞 Support & Documentation
+
+### Additional Documentation
+- **[Design Requirements](plans/pwa_design_requirements_plan.md)** - Complete project scope and requirements
+- **[Component Interfaces](plans/component_interfaces.md)** - Development interfaces and contracts  
+- **[Testing Strategy](plans/testing_strategy.md)** - Comprehensive testing approach
+- **[UI Wireframes](plans/pwa_wireframes.md)** - Detailed interface designs
 
 ### Getting Help
-- **Issues**: GitHub Issues for bug reports
-- **Discussions**: GitHub Discussions for questions
-- **Wiki**: Additional documentation and guides
-- **Code Reviews**: Peer review process
+- **Issues**: Use GitHub Issues for bug reports
+- **Documentation**: Check `plans/` directory for detailed guides
+- **Logs**: Use `docker-compose logs` for debugging
+- **API**: Access interactive docs at `http://localhost:8000/docs`
 
 ---
 
-## 🎯 Project Goals
+## 🎯 Project Status
 
-This project demonstrates:
-- **Modular Architecture**: Clean separation of concerns
-- **Parallel Development**: Efficient team collaboration
-- **Quality Assurance**: Comprehensive testing and monitoring
-- **Performance**: Optimized for real-world usage
-- **Accessibility**: Inclusive design practices
-- **Maintainability**: Clear documentation and standards
+**Current Phase**: Production-ready core functionality
+- ✅ **Document Processing**: Full PDF/EPUB/TXT support with OCR
+- ✅ **High-Quality TTS**: Tacotron2-DDC model integration
+- ✅ **Streaming Audio**: Opus-encoded chunk-based delivery
+- ✅ **Web Interface**: Complete Next.js PWA with advanced player
+- ✅ **Authentication**: Secure API key-based access
+- ✅ **Real-time Updates**: Live processing status
+- 🔄 **PWA Features**: Service worker and offline capabilities (planned)
+- 🔄 **Enhanced Testing**: Comprehensive frontend test coverage (planned)
+- 🔄 **Monitoring**: Performance and error tracking (planned)
 
-The modular approach enables rapid development while maintaining high code quality and ensures the application is scalable, maintainable, and performant across all target platforms.
-
-For detailed implementation guidance, refer to the comprehensive documentation in the `plans/` directory. 
+This system demonstrates a production-grade microservices architecture with modern web technologies, delivering high-quality audiobook generation with an intuitive user experience. 

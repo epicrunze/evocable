@@ -1,0 +1,103 @@
+---
+globs: services/**/Dockerfile,docker-compose*.yml,*.sh
+description: Docker and deployment practices for backend services
+---
+
+# Docker & Deployment Guide
+
+## Docker Compose Architecture
+The system uses [docker-compose.yml](mdc:docker-compose.yml) to orchestrate all services:
+
+```yaml
+# Core services pattern:
+services:
+  api:          # FastAPI gateway (port 8000)
+  storage:      # SQLite + file management (port 8001)
+  redis:        # Message broker (port 6379)
+  ingest:       # Document processing
+  segmenter:    # Text chunking
+  tts-worker:   # GPU-accelerated TTS
+  transcoder:   # Audio conversion
+```
+
+## Service Dependencies
+Services have health checks and dependencies:
+- **Storage + Redis**: Must be healthy before other services start
+- **TTS-Worker**: Requires GPU access and CUDA drivers
+- **Shared Volumes**: `/data/text`, `/data/wav`, `/data/ogg`, `/data/meta`
+
+## Dockerfile Patterns
+Each service follows this structure:
+```dockerfile
+FROM python:3.11-slim
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    required-packages \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy application code
+COPY . /app
+WORKDIR /app
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
+    CMD python -c "import requests; requests.get('http://localhost:8000/health')"
+
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+```
+
+## Environment Configuration
+Key environment variables:
+```bash
+# Authentication
+API_KEY=your-secure-api-key
+
+# Service URLs (Docker internal networking)
+STORAGE_URL=http://storage:8001
+REDIS_URL=redis://redis:6379
+
+# Processing configuration
+CHUNK_SIZE_CHARS=800
+SEGMENT_DURATION=3.14
+TTS_MODEL=tts_models/en/ljspeech/tacotron2-DDC
+```
+
+## Development Commands
+```bash
+# Start all services
+docker-compose up -d
+
+# Build and start (after code changes)
+docker-compose up --build
+
+# View logs from all services
+docker-compose logs -f
+
+# Service-specific operations
+docker-compose exec api bash          # Enter API container
+docker-compose logs -f tts-worker     # View TTS logs
+docker-compose restart segmenter     # Restart specific service
+
+# Cleanup
+docker-compose down                   # Stop services
+docker-compose down -v               # Stop and remove volumes
+```
+
+## Volume Management
+Shared volumes enable data flow between services:
+- `text_data:/data/text` - Extracted document text
+- `wav_data:/data/wav` - TTS-generated audio
+- `segment_data:/data/ogg` - Transcoded streaming chunks
+- `meta_data:/data/meta` - SQLite database and metadata
+
+## Production Deployment
+- Use production Docker Compose file with resource limits
+- Set up reverse proxy with [nginx/](mdc:nginx/) configuration
+- Configure log aggregation and monitoring
+- Ensure GPU drivers installed on host for TTS service
+- Set up backup strategy for persistent volumes

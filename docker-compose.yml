@@ -6,7 +6,7 @@ services:
     ports:
       - "8000:8000"
     environment:
-      API_KEY: "${API_KEY:-default-dev-key}"
+      API_KEY: "${API_KEY}"
       STORAGE_URL: "http://storage:8001"
       REDIS_URL: "redis://redis:6379"
     volumes:

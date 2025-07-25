@@ -1,0 +1,61 @@
+---
+globs: services/**/*.py
+description: Python and FastAPI coding standards for backend services
+---
+
+# Python & FastAPI Backend Standards
+
+## FastAPI Service Structure
+Each service follows this pattern:
+- `main.py` - FastAPI app with routes and background tasks
+- `models.py` - Pydantic models for request/response validation
+- `requirements.txt` - Python dependencies
+- `Dockerfile` - Container configuration
+
+## Code Standards
+- **Type hints**: Always use type annotations for function parameters and returns
+- **Async/await**: Use async functions for I/O operations (database, HTTP calls, file operations)
+- **Pydantic models**: Define request/response models for API endpoints
+- **Error handling**: Use FastAPI HTTPException for API errors
+- **Logging**: Use Python logging module, not print statements
+
+## FastAPI Patterns
+```python
+from fastapi import FastAPI, HTTPException, BackgroundTasks
+from pydantic import BaseModel
+import asyncio
+
+# Always define request/response models
+class BookRequest(BaseModel):
+    title: str
+    content: str
+
+# Use async for I/O operations
+@app.post("/api/v1/books")
+async def create_book(book: BookRequest, background_tasks: BackgroundTasks):
+    try:
+        # Background processing for long-running tasks
+        background_tasks.add_task(process_book, book.content)
+        return {"book_id": book_id, "status": "processing"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+```
+
+## Redis Queue Pattern
+Services use Redis for inter-service communication:
+```python
+import redis
+import json
+
+# Queue message for next service
+async def queue_for_processing(redis_client, queue_name: str, data: dict):
+    await redis_client.lpush(queue_name, json.dumps(data))
+
+# Process queue messages
+async def process_queue(redis_client, queue_name: str):
+    while True:
+        message = await redis_client.brpop(queue_name, timeout=1)
+        if message:
+            data = json.loads(message[1])
+            await process_item(data)
+```

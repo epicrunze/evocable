@@ -1,0 +1,29 @@
+---
+alwaysApply: true
+description: Backend microservices architecture and service communication
+---
+
+# Backend Architecture Guide
+
+## Service Overview
+The backend uses a microservices architecture with 6 specialized services:
+
+- **API Gateway** ([services/api/](mdc:services/api/)) - FastAPI main entry point, handles authentication and request routing
+- **Storage Service** ([services/storage/](mdc:services/storage/)) - SQLite metadata management and file system operations
+- **Ingest Service** ([services/ingest/](mdc:services/ingest/)) - Document text extraction (PDF/EPUB/TXT with OCR fallback)
+- **Segmenter Service** ([services/segmenter/](mdc:services/segmenter/)) - Text chunking with spaCy and SSML generation
+- **TTS Worker** ([services/tts-worker/](mdc:services/tts-worker/)) - Coqui TTS speech synthesis (GPU-accelerated)
+- **Transcoder Service** ([services/transcoder/](mdc:services/transcoder/)) - FFmpeg audio conversion (WAV → Opus)
+
+## Service Communication
+- **REST API**: Client ↔ API Gateway
+- **Redis Queues**: Inter-service messaging for processing pipeline
+- **HTTP Calls**: Direct service-to-service communication via Docker network
+- **Shared Volumes**: File system data sharing between services
+
+## Processing Pipeline
+```
+Upload → [API] → [Ingest] → [Segmenter] → [TTS-Worker] → [Transcoder] → [Storage] → Streaming
+```
+
+Each service communicates via Redis queues and updates processing status in the Storage service.
