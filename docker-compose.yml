@@ -3,8 +3,8 @@ services:
   api:
     build: ./services/api
     image: audiobook-api:latest
-    ports:
-      - "8000:8000"
+    expose:
+      - "8000"  # Expose to internal network only
     environment:
       API_KEY: "${API_KEY}"
       STORAGE_URL: "http://storage:8001"
@@ -22,14 +22,17 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+    networks:
+      - evocable-network
+      - default
 
   # Centralized storage and metadata management
   storage:
     build: ./services/storage
     image: audiobook-storage:latest
     user: root
-    ports:
-      - "8001:8001"
+    expose:
+      - "8001"  # Expose to internal network only
     environment:
       DATABASE_URL: "sqlite:////data/meta/storage.db"
       TEXT_DATA_PATH: "/data/text"
@@ -46,12 +49,15 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+    networks:
+      - evocable-network
+      - default
 
   # Message broker for service coordination
   redis:
     image: redis:7-alpine
-    ports:
-      - "6379:6379"
+    expose:
+      - "6379"  # Expose to internal network only
     volumes:
       - redis_data:/data
     restart: unless-stopped
@@ -60,6 +66,9 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+    networks:
+      - evocable-network
+      - default
 
   # Text extraction service - triggered by API
   ingest:
@@ -167,3 +176,8 @@ volumes:
   meta_data:
   redis_data:
   tts_models:
+
+networks:
+  evocable-network:
+    external: true
+    name: evocable-network

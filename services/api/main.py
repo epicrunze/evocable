@@ -205,7 +205,7 @@ print("DEBUG: FastAPI app initialized successfully")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:8000").split(",")],
+    allow_origins=[origin.strip() for origin in os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:8000").split(",")],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
