@@ -201,12 +201,22 @@ For detailed examples and integration guides, see the individual endpoint docume
 )
 print("DEBUG: FastAPI app initialized successfully")
 
+# CORS handled by FastAPI for service independence and multi-app nginx setup
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[origin.strip() for origin in os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:8000").split(",")],
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+    allow_headers=[
+        "Authorization",
+        "Content-Type", 
+        "Accept",
+        "Origin",
+        "X-Requested-With",
+        "X-Request-ID",
+        "If-None-Match",
+        "Range"
+    ],
 )
 
 # Redis client
