@@ -193,10 +193,6 @@ For detailed examples and integration guides, see the individual endpoint docume
         {
             "name": "Audio",
             "description": "Audio chunk streaming and playback"
-        },
-        {
-            "name": "Legacy",
-            "description": "Legacy endpoints for backward compatibility"
         }
     ],
     lifespan=lifespan
@@ -1455,102 +1451,17 @@ async def delete_book(
 # The frontend expects routes at /books/* but our API uses /api/v1/books/*
 # ============================================================================
 
-@app.get(
-    "/books",
-    tags=["Legacy"],
-    summary="List books (legacy)",
-    description="Legacy endpoint for backward compatibility. Use `/api/v1/books` instead.",
-    deprecated=True
-)
-async def list_books_alias(
-    sort_by: str = Query("created_at", description="Sort field"),
-    sort_order: str = Query("desc", description="Sort order (asc/desc)"), 
-    token: str = Depends(verify_authentication)
-):
-    """Alias for /api/v1/books - List all books."""
-    return await list_books(token)
-
-
-@app.post("/books/upload", response_model=BookResponse, status_code=status.HTTP_201_CREATED)
-async def upload_book_alias(
-    title: str = Form(..., description="Book title"),
-    format: str = Form(..., description="Book format (pdf, epub, txt)"),
-    file: UploadFile = File(..., description="Book file to process"),
-    token: str = Depends(verify_authentication)
-):
-    """Alias for /api/v1/books - Upload and process a book."""
-    return await submit_book(title, format, file, token)
-
-
-@app.get("/books/{book_id}")
-async def get_book_alias(
-    book_id: str,
-    token: str = Depends(verify_authentication)
-):
-    """Alias for /api/v1/books/{book_id}/status - Get book details."""
-    return await get_book_status(book_id, token)
-
-
-@app.delete("/books/{book_id}")
-async def delete_book_alias(
-    book_id: str,
-    token: str = Depends(verify_authentication)
-):
-    """Alias for /api/v1/books/{book_id} - Delete a book."""
-    return await delete_book(book_id, token)
-
-
-@app.get("/books/{book_id}/chunks")
-async def get_book_chunks_alias(
-    book_id: str,
-    token: str = Depends(verify_authentication)
-):
-    """Alias for /api/v1/books/{book_id}/chunks - Get book audio chunks."""
-    return await list_book_chunks(book_id, token)
-
-
-@app.post("/books/{book_id}/chunks/{seq}/signed-url")
-async def generate_chunk_signed_url_alias(
-    book_id: str,
-    seq: int,
-    expires_in: int = Query(3600, description="URL expiration time in seconds"),
-    token: str = Depends(verify_authentication)
-) -> Dict[str, Any]:
-    """Alias for /api/v1/books/{book_id}/chunks/{seq}/signed-url - Generate signed URL for audio chunk."""
-    try:
-        # Verify book exists
-        book = db_manager.get_book(book_id)
-        if not book:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Book with ID {book_id} not found"
-            )
-        
-        # Generate signed URL
-        signed_url = generate_signed_url(book_id, seq, token, expires_in)
-        
-        return {
-            "signed_url": signed_url,
-            "expires_in": expires_in
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to generate signed URL: {str(e)}"
-        )
-
-
-@app.get("/books/{book_id}/chunks/{seq}")
-async def get_audio_chunk_alias(
-    book_id: str, 
-    seq: int,
-    request: Request
-):
-    """Alias for /api/v1/books/{book_id}/chunks/{seq} - Stream audio chunk."""
-    return await get_audio_chunk(book_id, seq, request)
+# REMOVED: Legacy endpoints have been deprecated and removed
+# Frontend should now use the modern /api/v1/books/* endpoints instead
+# 
+# Legacy -> Modern endpoint mappings:
+# GET /books -> GET /api/v1/books
+# POST /books/upload -> POST /api/v1/books  
+# GET /books/{book_id} -> GET /api/v1/books/{book_id}/status
+# DELETE /books/{book_id} -> DELETE /api/v1/books/{book_id}
+# GET /books/{book_id}/chunks -> GET /api/v1/books/{book_id}/chunks
+# GET /books/{book_id}/chunks/{seq} -> GET /api/v1/books/{book_id}/chunks/{seq}
+# POST /books/{book_id}/chunks/{seq}/signed-url -> POST /api/v1/books/{book_id}/chunks/{seq}/signed-url
 
 
 if __name__ == "__main__":
