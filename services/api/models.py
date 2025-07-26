@@ -129,6 +129,33 @@ class ChunkListResponse(BaseModel):
     chunks: List[ChunkInfo] = Field(..., description="List of available chunks")
 
 
+class BatchSignedUrlRequest(BaseModel):
+    """Request model for generating multiple signed URLs."""
+    chunks: List[int] = Field(
+        ..., 
+        description="List of chunk sequence numbers to generate URLs for",
+        min_items=1,
+        max_items=20,
+        example=[0, 1, 2, 3, 4]
+    )
+    
+    @validator('chunks')
+    def validate_chunks(cls, v):
+        """Validate chunk sequence numbers."""
+        for chunk_seq in v:
+            if chunk_seq < 0:
+                raise ValueError(f"Chunk sequence must be non-negative, got {chunk_seq}")
+        return v
+
+
+class BatchSignedUrlResponse(BaseModel):
+    """Response model for batch signed URL generation."""
+    book_id: str = Field(..., description="Unique book identifier")
+    signed_urls: dict = Field(..., description="Mapping of chunk sequence to signed URL")
+    expires_in: int = Field(..., description="URL expiration time in seconds")
+    total_chunks: int = Field(..., description="Number of URLs generated")
+
+
 class ErrorResponse(BaseModel):
     """Standard error response model."""
     error: str = Field(..., description="Error type")

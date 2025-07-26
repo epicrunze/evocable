@@ -5,7 +5,7 @@ print("MAIN.PY TOP LEVEL EXECUTED - UNIQUE TEST PRINT")
 import os
 import sqlite3
 import asyncio
-from pathlib import Path
+from pathlib import Path as FilePath
 from typing import Dict, Any, Optional
 from contextlib import asynccontextmanager
 import hmac
@@ -30,6 +30,8 @@ from models import (
     BookStatusResponse,
     ChunkListResponse,
     ChunkInfo,
+    BatchSignedUrlRequest,
+    BatchSignedUrlResponse,
     ErrorResponse,
     BookStatus,
     BookFormat
@@ -895,7 +897,7 @@ async def submit_book(
                 detail="No file provided"
             )
         
-        file_extension = Path(file.filename).suffix.lower()
+        file_extension = FilePath(file.filename).suffix.lower()
         expected_extension = f".{book_format.value}"
         if file_extension != expected_extension:
             raise HTTPException(
@@ -920,7 +922,7 @@ async def submit_book(
         )
         
         # Save file to storage
-        book_dir = Path(f"/data/text/{book_id}")
+        book_dir = FilePath(f"/data/text/{book_id}")
         book_dir.mkdir(parents=True, exist_ok=True)
         
         file_path = book_dir / file.filename
@@ -1125,6 +1127,140 @@ async def generate_chunk_signed_url(
         )
 
 
+@app.post(
+    "/api/v1/books/{book_id}/chunks/batch-signed-urls", 
+    response_model=BatchSignedUrlResponse,
+    tags=["Audio"],
+    summary="Generate batch signed URLs",
+    description="""
+    Generate signed URLs for multiple audio chunks in a single request to optimize streaming performance.
+    
+    ## Performance Benefits
+    
+    - **Reduced Network Overhead**: Get multiple URLs in one request instead of individual requests
+    - **Parallel Loading**: Enable concurrent chunk prefetching
+    - **Lower Latency**: Minimize round trips for smooth streaming
+    
+    ## Usage Strategy
+    
+    1. **Initial Load**: Request URLs for first 5-10 chunks
+    2. **Progressive Loading**: As playback progresses, request next batch
+    3. **Prefetching**: Always stay 3-5 chunks ahead of current playback
+    
+    ## Batch Limits
+    
+    - **Maximum**: 20 chunks per request to prevent abuse
+    - **Minimum**: 1 chunk required
+    - **Validation**: All chunk sequences must be non-negative integers
+    
+    ## Security
+    
+    - Same security as individual signed URLs
+    - URLs expire based on `expires_in` parameter (default 1 hour)
+    - Signed with HMAC to prevent tampering
+    """,
+    responses={
+        200: {
+            "description": "Batch signed URLs generated successfully",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "book_id": "550e8400-e29b-41d4-a716-446655440000",
+                        "signed_urls": {
+                            "0": "https://server.epicrunze.com/api/v1/books/550e8400-e29b-41d4-a716-446655440000/chunks/0?expires=1640995200&signature=abc123&token=def456",
+                            "1": "https://server.epicrunze.com/api/v1/books/550e8400-e29b-41d4-a716-446655440000/chunks/1?expires=1640995200&signature=ghi789&token=def456",
+                            "2": "https://server.epicrunze.com/api/v1/books/550e8400-e29b-41d4-a716-446655440000/chunks/2?expires=1640995200&signature=jkl012&token=def456"
+                        },
+                        "expires_in": 3600,
+                        "total_chunks": 3
+                    }
+                }
+            }
+        },
+        400: {
+            "description": "Invalid request - chunk validation failed",
+            "content": {
+                "application/json": {
+                    "examples": {
+                        "invalid_chunks": {
+                            "summary": "Invalid chunk sequences",
+                            "value": {
+                                "detail": "Chunk sequence must be non-negative, got -1"
+                            }
+                        },
+                        "too_many_chunks": {
+                            "summary": "Batch size exceeded",
+                            "value": {
+                                "detail": "Maximum 20 chunks per batch request"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        404: {
+            "description": "Book not found",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "detail": "Book with ID 550e8400-e29b-41d4-a716-446655440000 not found"
+                    }
+                }
+            }
+        },
+        401: {
+            "description": "Authentication required",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "detail": "Invalid authentication credentials"
+                    }
+                }
+            }
+        }
+    }
+)
+async def generate_batch_signed_urls(
+    book_id: str,
+    request: BatchSignedUrlRequest,
+    expires_in: int = Query(3600, description="URL expiration time in seconds"),
+    token: str = Depends(verify_authentication)
+) -> BatchSignedUrlResponse:
+    """Generate signed URLs for multiple audio chunks at once."""
+    try:
+        # Verify book exists
+        book = db_manager.get_book(book_id)
+        if not book:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Book with ID {book_id} not found"
+            )
+        
+        # Get chunk sequences from request (already validated by Pydantic)
+        chunk_sequences = request.chunks
+        
+        # Generate signed URLs for all requested chunks
+        signed_urls = {}
+        for seq in chunk_sequences:
+            signed_url = generate_signed_url(book_id, seq, token, expires_in)
+            signed_urls[str(seq)] = signed_url
+        
+        return BatchSignedUrlResponse(
+            book_id=book_id,
+            signed_urls=signed_urls,
+            expires_in=expires_in,
+            total_chunks=len(signed_urls)
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate batch signed URLs: {str(e)}"
+        )
+
+
 @app.get(
     "/api/v1/books/{book_id}/chunks/{seq}",
     tags=["Audio"],
@@ -1255,9 +1391,9 @@ async def generate_chunk_signed_url(
     }
 )
 async def get_audio_chunk(
-    book_id: str = Path(..., description="Unique book identifier", example="550e8400-e29b-41d4-a716-446655440000"), 
-    seq: int = Path(..., description="Chunk sequence number (0-based)", example=0, ge=0),
-    request: Request = Depends()
+    request: Request,
+    book_id: str, 
+    seq: int
 ):
     """Stream an audio chunk with multiple authentication methods."""
     try:
@@ -1304,19 +1440,39 @@ async def get_audio_chunk(
                 )
             
             # Check if audio file exists
-            audio_file_path = Path(chunk["file_path"])
+            audio_file_path = FilePath(chunk["file_path"])
             if not audio_file_path.exists():
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail=f"Audio file not found: {chunk['file_path']}"
                 )
             
-            # Return file response
-            return FileResponse(
+            # Return file response with caching headers
+            from fastapi.responses import FileResponse
+            import hashlib
+            
+            # Generate ETag based on file path and modification time
+            file_stat = audio_file_path.stat()
+            etag_data = f"{audio_file_path}:{file_stat.st_mtime}:{file_stat.st_size}"
+            etag = hashlib.md5(etag_data.encode()).hexdigest()
+            
+            response = FileResponse(
                 path=str(audio_file_path),
                 media_type="audio/ogg",
                 filename=f"chunk_{seq:06d}.ogg"
             )
+            
+            # Add caching headers
+            response.headers["Cache-Control"] = "public, max-age=3600"  # 1 hour cache
+            response.headers["ETag"] = f'"{etag}"'
+            
+            # Check if client has cached version
+            if_none_match = request.headers.get("If-None-Match")
+            if if_none_match and if_none_match.strip('"') == etag:
+                from fastapi.responses import Response
+                return Response(status_code=304)  # Not Modified
+            
+            return response
         
     except HTTPException:
         raise
@@ -1429,7 +1585,7 @@ async def delete_book(
         
         for path in file_paths_to_remove:
             try:
-                if Path(path).exists():
+                if FilePath(path).exists():
                     shutil.rmtree(path)
                     print(f"Deleted directory: {path}")
             except Exception as e:
