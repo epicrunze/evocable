@@ -12,6 +12,7 @@ import hmac
 import hashlib
 import time
 from urllib.parse import urlencode
+from datetime import datetime
 
 print("DEBUG: Basic imports completed")
 
@@ -21,6 +22,9 @@ from fastapi.responses import FileResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import redis
 import httpx
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 
 # Import our data models
 from models import (
@@ -39,19 +43,25 @@ from models import (
 
 # Import authentication models
 from auth_models import (
-    LoginRequest,
+    RegisterRequest,
+    NewLoginRequest,
     LoginResponse,
     RefreshResponse,
     LogoutResponse,
     User,
-    session_manager
+    UserProfile,
+    UserUpdateRequest,
+    PasswordResetRequest,
+    PasswordResetConfirm,
+    ChangePasswordRequest,
+    SessionManager
 )
 
 # Import background task processing
 from background_tasks import pipeline
 
 # Security
-security = HTTPBearer()
+security = HTTPBearer(auto_error=False)  # Don't auto-raise 403, let us handle missing auth with 401
 
 # Background task for monitoring pipeline
 pipeline_monitor_task = None
@@ -219,6 +229,77 @@ app.add_middleware(
     ],
 )
 
+# Rate limiting setup
+print("DEBUG: Setting up rate limiting")
+limiter = Limiter(key_func=get_remote_address, storage_uri=os.getenv("REDIS_URL", "redis://localhost:6379"))
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+print("DEBUG: Rate limiting configured")
+
+# Security middleware for headers
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    """Add security headers to all responses."""
+    response = await call_next(request)
+    
+    # Security headers
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+    
+    # Content Security Policy (basic)
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data: https:; "
+        "connect-src 'self'; "
+        "font-src 'self'; "
+        "object-src 'none'; "
+        "base-uri 'self'; "
+        "frame-ancestors 'none'"
+    )
+    
+    return response
+
+# Authentication event logging middleware
+@app.middleware("http")
+async def log_auth_events(request: Request, call_next):
+    """Log authentication-related events."""
+    import logging
+    
+    # Set up logging if not already configured
+    logging.basicConfig(level=logging.INFO)
+    logger = logging.getLogger("auth_events")
+    
+    # Log authentication requests
+    if request.url.path.startswith("/auth/"):
+        client_ip = request.client.host if request.client else "unknown"
+        user_agent = request.headers.get("User-Agent", "unknown")
+        
+        logger.info(
+            f"Auth request: {request.method} {request.url.path} "
+            f"from {client_ip} UA: {user_agent[:100]}"
+        )
+    
+    response = await call_next(request)
+    
+    # Log failed authentication attempts
+    if request.url.path.startswith("/auth/") and response.status_code in [401, 403]:
+        client_ip = request.client.host if request.client else "unknown"
+        logger.warning(
+            f"Auth failure: {request.method} {request.url.path} "
+            f"from {client_ip} status: {response.status_code}"
+        )
+    
+    return response
+
+print("DEBUG: Security middleware configured")
+
+
+
 # Redis client
 print("DEBUG: About to create Redis client")
 redis_client = redis.Redis.from_url(
@@ -239,20 +320,353 @@ db_manager = DatabaseManager(
 )
 print("DEBUG: DatabaseManager created successfully")
 
+# User service integration for authentication
+print("DEBUG: Setting up user service integration")
 
-def verify_authentication(credentials: HTTPAuthorizationCredentials = Depends(security)) -> str:
+class StorageBookService:
+    """Book service that communicates with storage service."""
+    
+    def __init__(self, storage_url: str):
+        self.storage_url = storage_url.rstrip('/')
+        self.http_client = httpx.AsyncClient()
+    
+    async def create_book(self, title: str, format: str, user_id: str):
+        """Create book via storage service."""
+        try:
+            book_data = {
+                "title": title,
+                "format": format,
+                "user_id": user_id
+            }
+            response = await self.http_client.post(
+                f"{self.storage_url}/books",
+                json=book_data
+            )
+            
+            if response.status_code == 201:
+                return response.json()
+            else:
+                print(f"DEBUG: Create book failed: {response.status_code} - {response.text}")
+                return None
+        except Exception as e:
+            print(f"DEBUG: Create book error: {e}")
+            return None
+    
+    async def get_books(self, user_id: str = None, page: int = 1, per_page: int = 50):
+        """Get books via storage service."""
+        try:
+            params = {"page": page, "per_page": per_page}
+            if user_id:
+                params["user_id"] = user_id
+                
+            response = await self.http_client.get(
+                f"{self.storage_url}/books",
+                params=params
+            )
+            
+            if response.status_code == 200:
+                return response.json()
+            return None
+        except Exception as e:
+            print(f"DEBUG: Get books error: {e}")
+            return None
+    
+    async def get_book_by_id(self, book_id: str, user_id: str = None):
+        """Get book by ID via storage service."""
+        try:
+            params = {}
+            if user_id:
+                params["user_id"] = user_id
+            
+            url = f"{self.storage_url}/books/{book_id}"
+            print(f"DEBUG SERVICE: GET {url} with params={params}")
+            
+            response = await self.http_client.get(url, params=params)
+            
+            print(f"DEBUG SERVICE: Response status={response.status_code}")
+            if response.status_code == 200:
+                result = response.json()
+                print(f"DEBUG SERVICE: Response data={result}")
+                return result
+            else:
+                print(f"DEBUG SERVICE: Response text={response.text}")
+            return None
+        except Exception as e:
+            print(f"DEBUG: Get book by ID error: {e}")
+            return None
+    
+    async def update_book_status(self, book_id: str, status: str, user_id: str = None):
+        """Update book status via storage service."""
+        try:
+            params = {"status": status}
+            if user_id:
+                params["user_id"] = user_id
+                
+            response = await self.http_client.put(
+                f"{self.storage_url}/books/{book_id}/status",
+                params=params
+            )
+            
+            if response.status_code == 200:
+                return response.json()
+            return None
+        except Exception as e:
+            print(f"DEBUG: Update book status error: {e}")
+            return None
+    
+    async def delete_book(self, book_id: str, user_id: str = None):
+        """Delete book via storage service."""
+        try:
+            params = {}
+            if user_id:
+                params["user_id"] = user_id
+                
+            response = await self.http_client.delete(
+                f"{self.storage_url}/books/{book_id}",
+                params=params
+            )
+            
+            if response.status_code == 200:
+                return response.json()
+            return None
+        except Exception as e:
+            print(f"DEBUG: Delete book error: {e}")
+            return None
+
+
+class StorageUserService:
+    """User service that communicates with storage service."""
+    
+    def __init__(self, storage_url: str):
+        self.storage_url = storage_url.rstrip('/')
+        self.http_client = httpx.AsyncClient()
+    
+    async def authenticate_user(self, email: str, password: str):
+        """Authenticate user via storage service."""
+        try:
+            response = await self.http_client.post(
+                f"{self.storage_url}/users/authenticate",
+                params={"email": email, "password": password}
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                if data.get("success"):
+                    # Create a simple user object from the response
+                    user_data = data.get("user", {})
+                    user = SimpleUser(
+                        id=user_data.get("id"),
+                        username=user_data.get("username"),
+                        email=user_data.get("email"),
+                        is_active=user_data.get("is_active", True),
+                        is_verified=user_data.get("is_verified", False)
+                    )
+                    return user
+            return None
+        except Exception as e:
+            print(f"DEBUG: User authentication failed: {e}")
+            return None
+    
+    async def get_user_by_id(self, user_id: str):
+        """Get user by ID via storage service."""
+        try:
+            response = await self.http_client.get(f"{self.storage_url}/users/{user_id}")
+            
+            if response.status_code == 200:
+                data = response.json()
+                return UserProfileResponse(
+                    id=data["id"],
+                    username=data["username"],
+                    email=data["email"],
+                    is_active=data["is_active"],
+                    is_verified=data["is_verified"],
+                    created_at=data.get("created_at"),
+                    updated_at=data.get("updated_at")
+                )
+            return None
+        except Exception as e:
+            print(f"DEBUG: Get user by ID failed: {e}")
+            return None
+    
+    async def create_user(self, user_data: dict):
+        """Create user via storage service."""
+        try:
+            response = await self.http_client.post(
+                f"{self.storage_url}/users",
+                json=user_data
+            )
+            
+            if response.status_code == 201:
+                return response.json()
+            else:
+                # Return error details for proper handling
+                return {"error": response.json().get("detail", "User creation failed")}
+        except Exception as e:
+            print(f"DEBUG: User creation failed: {e}")
+            return {"error": str(e)}
+    
+    async def update_user(self, user_id: str, update_data: dict):
+        """Update user via storage service."""
+        try:
+            response = await self.http_client.put(
+                f"{self.storage_url}/users/{user_id}",
+                json=update_data
+            )
+            
+            if response.status_code == 200:
+                return response.json()
+            else:
+                return {"error": response.json().get("detail", "User update failed")}
+        except Exception as e:
+            print(f"DEBUG: User update failed: {e}")
+            return {"error": str(e)}
+    
+    async def change_password(self, user_id: str, current_password: str, new_password: str):
+        """Change user password via storage service."""
+        try:
+            response = await self.http_client.post(
+                f"{self.storage_url}/users/{user_id}/change-password",
+                params={
+                    "current_password": current_password,
+                    "new_password": new_password
+                }
+            )
+            
+            return response.status_code == 200
+        except Exception as e:
+            print(f"DEBUG: Password change failed: {e}")
+            return False
+    
+    async def reset_password_by_email(self, email: str, new_password: str):
+        """Reset password for user with given email via storage service."""
+        try:
+            response = await self.http_client.post(
+                f"{self.storage_url}/users/reset-password",
+                params={
+                    "email": email,
+                    "new_password": new_password
+                }
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                return data.get("success", False)
+            return False
+        except Exception as e:
+            print(f"DEBUG: Password reset failed: {e}")
+            return False
+    
+    async def get_user_by_email(self, email: str):
+        """Get user by email via storage service."""
+        try:
+            response = await self.http_client.get(
+                f"{self.storage_url}/users/by-email/{email}"
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                return SimpleUser(
+                    id=data["id"],
+                    username=data["username"],
+                    email=data["email"],
+                    is_active=data["is_active"],
+                    is_verified=data["is_verified"]
+                )
+            return None
+            
+        except Exception as e:
+            print(f"DEBUG: Get user by email failed: {e}")
+            return None
+
+
+# Simple user classes for type safety
+class SimpleUser:
+    """Simple user class for authentication responses."""
+    def __init__(self, id: str, username: str, email: str, is_active: bool, is_verified: bool):
+        self.id = id
+        self.username = username
+        self.email = email
+        self.is_active = is_active
+        self.is_verified = is_verified
+
+
+class UserProfileResponse:
+    """User profile response class."""
+    def __init__(self, id: str, username: str, email: str, is_active: bool, is_verified: bool, 
+                 created_at: str = None, updated_at: str = None):
+        self.id = id
+        self.username = username
+        self.email = email
+        self.is_active = is_active
+        self.is_verified = is_verified
+        self.created_at = created_at
+        self.updated_at = updated_at
+
+# Create user service instance
+user_service = StorageUserService(os.getenv("STORAGE_URL", "http://storage:8001"))
+
+# Create book service instance
+book_service = StorageBookService(os.getenv("STORAGE_URL", "http://storage:8001"))
+
+# Create session manager with user service
+session_manager = SessionManager(user_service=user_service)
+print("DEBUG: User service, book service, and session manager created successfully")
+
+
+async def _signal_file_cleanup(book_id: str, user_id: str):
+    """Signal other services to clean up their files for a deleted book."""
+    try:
+        import redis
+        import json
+        from datetime import datetime
+        
+        # Connect to Redis
+        redis_client = redis.Redis.from_url(
+            os.getenv("REDIS_URL", "redis://localhost:6379"),
+            decode_responses=True
+        )
+        
+        # Create cleanup message
+        cleanup_message = {
+            "book_id": book_id,
+            "user_id": user_id,
+            "action": "cleanup_files",
+            "timestamp": datetime.utcnow().isoformat(),
+            "requested_by": "api_service"
+        }
+        
+        # Send to cleanup queue for all services to process
+        redis_client.lpush("cleanup_queue", json.dumps(cleanup_message))
+        print(f"DEBUG: Sent cleanup signal for book {book_id} to cleanup_queue")
+        
+    except Exception as e:
+        print(f"Warning: Failed to signal file cleanup: {e}")
+        # Don't fail the delete operation if cleanup signaling fails
+
+
+def verify_authentication(credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)) -> str:
     """Verify authentication from Authorization header (API key or session token)."""
+    # Check if credentials are missing (no Authorization header)
+    if not credentials:
+        print("[AUTH DEBUG] No Authorization header provided, raising 401")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing authentication credentials"
+        )
+    
     token = credentials.credentials
+    print(f"[AUTH DEBUG] Verifying token: {token[:10]}...")
     
     # First, try to validate as session token
     payload = session_manager.validate_session_token(token)
+    print(f"[AUTH DEBUG] Token validation result: {payload}")
+    
     if payload:
+        print(f"[AUTH DEBUG] Token is valid, returning token")
         return token
     
-    # If not a valid session token, try as API key
-    if session_manager.validate_api_key(token):
-        return token
-    
+    # If session token validation fails, raise authentication error
+    print(f"[AUTH DEBUG] Token validation failed, raising 401")
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Invalid authentication credentials"
@@ -290,9 +704,7 @@ def verify_authentication_query(
             if payload:
                 print("[AUTH DEBUG] Authenticated via session token (header)")
                 return token
-            if session_manager.validate_api_key(token):
-                print("[AUTH DEBUG] Authenticated via API key (header)")
-                return token
+
         except Exception as e:
             print("[AUTH DEBUG] Exception during header token validation:", e)
     else:
@@ -306,20 +718,77 @@ def verify_authentication_query(
             if payload:
                 print("[AUTH DEBUG] Authenticated via session token (query)")
                 return query_token
-            if session_manager.validate_api_key(query_token):
-                print("[AUTH DEBUG] Authenticated via API key (query)")
-                return query_token
+
         except Exception as e:
             print("[AUTH DEBUG] Exception during query token validation:", e)
     else:
         print("[AUTH DEBUG] No query token present")
-    print("[AUTH DEBUG] Authentication failed")
+    print("[AUTH DEBUG] Authentication failed - no valid credentials provided")
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Invalid authentication credentials"
+        detail="Missing or invalid authentication credentials"
     )
 
 print("DEBUG: verify_authentication_query function defined")
+
+
+# User context dependency
+async def get_current_user(token: str = Depends(verify_authentication)) -> dict:
+    """Get current user context from authentication token."""
+    try:
+        # Get user information from token
+        user_info = await session_manager.get_user_from_token(token)
+        
+        if not user_info:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid or expired token"
+            )
+        
+        user_id = user_info.get("id")
+        if not user_id:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token payload - missing user ID"
+            )
+        
+        # For API key users (admin), return the token info directly
+        if user_id == "00000000-0000-0000-0000-000000000001":
+            return {
+                "id": user_id,
+                "username": user_info.get("username", "admin"),
+                "email": "admin@evocable.local",
+                "is_active": True,
+                "is_verified": True,
+                "is_admin": True
+            }
+        
+        # For regular users, get fresh data from storage service
+        user_profile = await user_service.get_user_by_id(user_id)
+        if not user_profile:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found"
+            )
+        
+        return {
+            "id": user_profile.id,
+            "username": user_profile.username,
+            "email": user_profile.email,
+            "is_active": user_profile.is_active,
+            "is_verified": user_profile.is_verified,
+            "is_admin": False
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get current user: {str(e)}"
+        )
+
+print("DEBUG: get_current_user dependency function defined")
 
 print("DEBUG: Defining generate_signed_url function")
 def generate_signed_url(book_id: str, chunk_seq: int, token: str, expires_in: int = 3600) -> str:
@@ -391,8 +860,7 @@ def verify_signed_url(request: Request, book_id: str, chunk_seq: int) -> str:
     if payload:
         return token
     
-    if session_manager.validate_api_key(token):
-        return token
+
     
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -512,96 +980,149 @@ async def test_route():
     return {"message": "Test route is working"}
 
 
-# Authentication endpoints
+
+
+
+# New user authentication endpoints
 @app.post(
-    "/auth/login", 
-    response_model=LoginResponse,
+    "/auth/register", 
+    response_model=UserProfile,
+    status_code=status.HTTP_201_CREATED,
     tags=["Authentication"],
-    summary="Authenticate and get session token",
+    summary="Register new user account",
     description="""
-    Exchange an API key for a session token with optional "remember me" functionality.
+    Register a new user account with email and password.
+    
+    ## Features
+    
+    - **Email validation**: Ensures valid email format
+    - **Password strength**: Enforces strong password requirements
+    - **Username validation**: Alphanumeric characters, underscores, and hyphens only
+    - **Duplicate prevention**: Checks for existing usernames and emails
+    
+    ## Password Requirements
+    
+    - Minimum 8 characters
+    - At least one uppercase letter
+    - At least one lowercase letter  
+    - At least one number
+    - At least one special character
+    - Password and confirmation must match
+    """,
+    responses={
+        201: {"description": "User successfully created"},
+        400: {"description": "Username or email already exists"},
+        422: {"description": "Validation error (weak password, invalid format, etc.)"}
+    }
+)
+@limiter.limit("100/minute" if os.getenv("DEBUG", "false").lower() == "true" else "3/hour")
+async def register_user(request: Request, request_data: RegisterRequest) -> UserProfile:
+    """Register a new user account."""
+    try:
+        # Prepare user data for storage service
+        user_data = {
+            "username": request_data.username,
+            "email": request_data.email,
+            "password": request_data.password
+        }
+        
+        # Create user via storage service
+        result = await user_service.create_user(user_data)
+        
+        if "error" in result:
+            # Handle errors from storage service
+            error_msg = result["error"]
+            if "already exists" in error_msg.lower():
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=error_msg
+                )
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=error_msg
+                )
+        
+        # Convert storage service response to UserProfile
+        return UserProfile(
+            id=result["id"],
+            username=result["username"],
+            email=result["email"],
+            is_active=result["is_active"],
+            is_verified=result["is_verified"],
+            created_at=datetime.fromisoformat(result["created_at"].replace("Z", "+00:00")),
+            updated_at=datetime.fromisoformat(result["updated_at"].replace("Z", "+00:00"))
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Registration failed: {str(e)}"
+        )
+
+
+@app.post(
+    "/auth/login/email",
+    response_model=LoginResponse,
+    tags=["Authentication"], 
+    summary="Login with email and password",
+    description="""
+    Authenticate with email and password to receive a session token.
+    
+    ## Features
+    
+    - **Email/password authentication**: Secure login using user credentials
+    - **Remember me**: Optional extended session duration (30 days vs 24 hours)
+    - **JWT tokens**: Secure session tokens with user information
+    - **Account validation**: Checks for active account status
     
     ## Usage
     
-    Use this endpoint to:
-    - Convert API keys to session tokens for web applications
-    - Enable temporary authentication without exposing API keys
-    - Support "remember me" functionality for extended sessions
-    
-    ## Token Types
-    
-    - **Standard Session**: Expires in 1 hour
-    - **Remember Me Session**: Expires in 30 days
-    
-    ## Security Notes
-    
-    - Session tokens are JWT-based and contain user information
-    - Tokens are signed with a server secret key
-    - Use HTTPS in production to protect tokens in transit
+    Use this endpoint for user authentication instead of API keys.
+    The returned session token can be used for all authenticated requests.
     """,
     responses={
-        200: {
-            "description": "Authentication successful",
-            "content": {
-                "application/json": {
-                    "example": {
-                        "sessionToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-                        "expiresAt": "2024-12-31T23:59:59Z",
-                        "user": {
-                            "id": "admin",
-                            "username": "admin",
-                            "role": "administrator"
-                        }
-                    }
-                }
-            }
-        },
-        401: {
-            "description": "Invalid API key",
-            "content": {
-                "application/json": {
-                    "example": {
-                        "detail": "Invalid API key"
-                    }
-                }
-            }
-        },
-        422: {
-            "description": "Invalid request format",
-            "content": {
-                "application/json": {
-                    "example": {
-                        "detail": [
-                            {
-                                "loc": ["body", "apiKey"],
-                                "msg": "field required",
-                                "type": "value_error.missing"
-                            }
-                        ]
-                    }
-                }
-            }
-        }
+        200: {"description": "Authentication successful"},
+        401: {"description": "Invalid email or password"},
+        422: {"description": "Invalid request format"}
     }
 )
-async def login(request: LoginRequest) -> LoginResponse:
-    """Authenticate user with API key and return session token."""
+@limiter.limit("100/minute" if os.getenv("DEBUG", "false").lower() == "true" else "5/minute")
+async def login_with_email(request: Request, request_data: NewLoginRequest) -> LoginResponse:
+    """Authenticate user with email and password."""
     try:
-        if not session_manager.validate_api_key(request.apiKey):
+        # Authenticate user via storage service
+        authenticated_user = await session_manager.authenticate_user(request_data.email, request_data.password)
+        
+        if not authenticated_user:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid API key"
+                detail="Invalid email or password"
+            )
+        
+        # Check if user account is active
+        if not authenticated_user.get("is_active", True):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Account is deactivated"
             )
         
         # Create session token
-        user_id = "admin"  # For now, single admin user
+        user_id = authenticated_user["id"]
+        username = authenticated_user["username"]
         session_token, expires_at = session_manager.create_session_token(
-            user_id, 
-            remember=request.remember or False
+            user_id,
+            username=username,
+            remember=request_data.remember or False
         )
         
-        # Get user info
-        user = session_manager.get_user_info(user_id)
+        # Create user object for response
+        user = User(
+            id=user_id,
+            username=username
+        )
         
         return LoginResponse(
             sessionToken=session_token,
@@ -615,6 +1136,413 @@ async def login(request: LoginRequest) -> LoginResponse:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Login failed: {str(e)}"
+        )
+
+
+@app.get(
+    "/auth/profile",
+    response_model=UserProfile,
+    tags=["Authentication"],
+    summary="Get user profile",
+    description="""
+    Get the current user's profile information.
+    
+    ## Returns
+    
+    - **User details**: ID, username, email, account status
+    - **Account info**: Creation date, verification status, active status
+    - **No sensitive data**: Password and other sensitive information excluded
+    """,
+    responses={
+        200: {"description": "Profile retrieved successfully"},
+        401: {"description": "Invalid or expired token"}
+    }
+)
+async def get_user_profile(token: str = Depends(verify_authentication)) -> UserProfile:
+    """Get current user profile."""
+    try:
+        # Get user information from token
+        user_info = await session_manager.get_user_from_token(token)
+        
+        if not user_info:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid or expired token"
+            )
+        
+        user_id = user_info.get("id")
+        if not user_id:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token payload"
+            )
+        
+        # Get fresh user data from storage service
+        user_profile_response = await user_service.get_user_by_id(user_id)
+        
+        if not user_profile_response:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found"
+            )
+        
+        # Convert to UserProfile response
+        created_at = datetime.utcnow()  # Default fallback
+        updated_at = datetime.utcnow()  # Default fallback
+        
+        if user_profile_response.created_at:
+            try:
+                created_at = datetime.fromisoformat(user_profile_response.created_at.replace("Z", "+00:00"))
+            except (ValueError, AttributeError):
+                pass  # Use default fallback
+        
+        if user_profile_response.updated_at:
+            try:
+                updated_at = datetime.fromisoformat(user_profile_response.updated_at.replace("Z", "+00:00"))
+            except (ValueError, AttributeError):
+                pass  # Use default fallback
+        
+        return UserProfile(
+            id=user_profile_response.id,
+            username=user_profile_response.username,
+            email=user_profile_response.email,
+            is_active=user_profile_response.is_active,
+            is_verified=user_profile_response.is_verified,
+            created_at=created_at,
+            updated_at=updated_at
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Profile retrieval failed: {str(e)}"
+        )
+
+
+@app.put(
+    "/auth/profile",
+    response_model=UserProfile,
+    tags=["Authentication"],
+    summary="Update user profile",
+    description="""
+    Update the current user's profile information.
+    
+    ## Updateable Fields
+    
+    - **Username**: Must be unique and follow validation rules
+    - **Email**: Must be valid email format and unique
+    
+    ## Validation
+    
+    - Username: 3-50 characters, alphanumeric, underscores, hyphens only
+    - Email: Valid email format, uniqueness checked
+    """,
+    responses={
+        200: {"description": "Profile updated successfully"},
+        400: {"description": "Username or email already exists"},
+        401: {"description": "Invalid or expired token"},
+        422: {"description": "Validation error"}
+    }
+)
+@limiter.limit("100/minute" if os.getenv("DEBUG", "false").lower() == "true" else "10/minute")
+async def update_user_profile(
+    request: Request,
+    request_data: UserUpdateRequest,
+    token: str = Depends(verify_authentication)
+) -> UserProfile:
+    """Update current user profile."""
+    try:
+        # Get user information from token
+        user_info = await session_manager.get_user_from_token(token)
+        
+        if not user_info:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid or expired token"
+            )
+        
+        user_id = user_info.get("id")
+        if not user_id:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token payload"
+            )
+        
+        # Prepare update data (only include non-None fields)
+        update_data = {}
+        if request_data.username is not None:
+            update_data["username"] = request_data.username
+        if request_data.email is not None:
+            update_data["email"] = request_data.email
+        
+        # Don't update if no data provided
+        if not update_data:
+            # Just return current profile
+            user_profile_response = await user_service.get_user_by_id(user_id)
+            if not user_profile_response:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="User not found"
+                )
+            
+            # Parse timestamps
+            created_at = datetime.utcnow()  # Default fallback
+            updated_at = datetime.utcnow()  # Default fallback
+            
+            if user_profile_response.created_at:
+                try:
+                    created_at = datetime.fromisoformat(user_profile_response.created_at.replace("Z", "+00:00"))
+                except (ValueError, AttributeError):
+                    pass  # Use default fallback
+            
+            if user_profile_response.updated_at:
+                try:
+                    updated_at = datetime.fromisoformat(user_profile_response.updated_at.replace("Z", "+00:00"))
+                except (ValueError, AttributeError):
+                    pass  # Use default fallback
+            
+            return UserProfile(
+                id=user_profile_response.id,
+                username=user_profile_response.username,
+                email=user_profile_response.email,
+                is_active=user_profile_response.is_active,
+                is_verified=user_profile_response.is_verified,
+                created_at=created_at,
+                updated_at=updated_at
+            )
+        
+        # Update user via storage service
+        result = await user_service.update_user(user_id, update_data)
+        
+        if "error" in result:
+            # Handle errors from storage service
+            error_msg = result["error"]
+            if "already exists" in error_msg.lower():
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=error_msg
+                )
+            elif "not found" in error_msg.lower():
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=error_msg
+                )
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=error_msg
+                )
+        
+        # Convert storage service response to UserProfile
+        return UserProfile(
+            id=result["id"],
+            username=result["username"],
+            email=result["email"],
+            is_active=result["is_active"],
+            is_verified=result["is_verified"],
+            created_at=datetime.fromisoformat(result["created_at"].replace("Z", "+00:00")),
+            updated_at=datetime.fromisoformat(result["updated_at"].replace("Z", "+00:00"))
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Profile update failed: {str(e)}"
+        )
+
+
+@app.post(
+    "/auth/change-password",
+    tags=["Authentication"],
+    summary="Change user password", 
+    description="""
+    Change the current user's password.
+    
+    ## Requirements
+    
+    - **Current password**: Must provide current password for verification
+    - **New password**: Must meet strength requirements
+    - **Confirmation**: New password must be confirmed
+    
+    ## Security
+    
+    - Validates current password before allowing change
+    - Enforces strong password requirements
+    - Passwords are securely hashed before storage
+    """,
+    responses={
+        200: {"description": "Password changed successfully"},
+        400: {"description": "Current password incorrect"},
+        401: {"description": "Invalid or expired token"},
+        422: {"description": "Password validation failed"}
+    }
+)
+@limiter.limit("50/minute" if os.getenv("DEBUG", "false").lower() == "true" else "5/hour")
+async def change_password(
+    request: Request,
+    request_data: ChangePasswordRequest,
+    token: str = Depends(verify_authentication)
+):
+    """Change user password."""
+    try:
+        # Get user information from token
+        user_info = await session_manager.get_user_from_token(token)
+        
+        if not user_info:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid or expired token"
+            )
+        
+        user_id = user_info.get("id")
+        if not user_id:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token payload"
+            )
+        
+        # Change password via storage service
+        success = await user_service.change_password(
+            user_id,
+            request_data.current_password,
+            request_data.new_password
+        )
+        
+        if success:
+            return {"message": "Password changed successfully"}
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Current password is incorrect"
+            )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Password change failed: {str(e)}"
+        )
+
+
+@app.post(
+    "/auth/forgot-password",
+    tags=["Authentication"],
+    summary="Request password reset",
+    description="""
+    Request a password reset token for the given email address.
+    
+    ## Process
+    
+    1. **Email verification**: Checks if email exists in system
+    2. **Token generation**: Creates secure reset token with expiration
+    3. **Email notification**: Sends reset instructions (placeholder for now)
+    
+    ## Security
+    
+    - Reset tokens expire after 15 minutes
+    - Tokens are single-use and securely signed
+    - No user information exposed for non-existent emails
+    """,
+    responses={
+        200: {"description": "Reset email sent (if email exists)"},
+        422: {"description": "Invalid email format"}
+    }
+)
+@limiter.limit("50/minute" if os.getenv("DEBUG", "false").lower() == "true" else "3/hour")
+async def forgot_password(request: Request, request_data: PasswordResetRequest):
+    """Request password reset."""
+    try:
+        # Check if user exists (but don't reveal this information)
+        user = await user_service.get_user_by_email(request_data.email)
+        
+        if user:
+            # Generate reset token
+            reset_token, expires_at = session_manager.create_reset_token(
+                user_id=user.id,
+                email=user.email
+            )
+            
+            # TODO: In a real implementation, send email with reset link
+            # For now, we'll log the token (NEVER do this in production!)
+            print(f"Password reset token for {user.email}: {reset_token}")
+            print(f"Token expires at: {expires_at}")
+        
+        # Always return the same message for security (don't reveal if email exists)
+        return {"message": "If the email exists, a reset link has been sent"}
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Password reset failed: {str(e)}"
+        )
+
+
+@app.post(
+    "/auth/reset-password",
+    tags=["Authentication"],
+    summary="Reset password with token",
+    description="""
+    Reset password using a valid reset token.
+    
+    ## Process
+    
+    1. **Token validation**: Verifies reset token is valid and not expired
+    2. **Password validation**: Ensures new password meets requirements
+    3. **Password update**: Securely hashes and stores new password
+    4. **Token invalidation**: Prevents token reuse
+    """,
+    responses={
+        200: {"description": "Password reset successfully"},
+        400: {"description": "Invalid or expired reset token"},
+        422: {"description": "Password validation failed"}
+    }
+)
+@limiter.limit("50/minute" if os.getenv("DEBUG", "false").lower() == "true" else "5/hour")
+async def reset_password(request: Request, request_data: PasswordResetConfirm):
+    """Reset password with token."""
+    try:
+        # Validate the reset token
+        payload = session_manager.validate_reset_token(request_data.token)
+        
+        if not payload:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid or expired reset token"
+            )
+        
+        # Extract user info from token
+        user_email = payload.get("email")
+        if not user_email:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid token payload"
+            )
+        
+        # Reset the password via storage service
+        success = await user_service.reset_password_by_email(
+            email=user_email,
+            new_password=request_data.new_password
+        )
+        
+        if not success:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Failed to reset password"
+            )
+        
+        return {"message": "Password reset successfully"}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Password reset failed: {str(e)}"
         )
 
 
@@ -755,11 +1683,20 @@ async def logout(token: str = Depends(verify_authentication)) -> LogoutResponse:
         }
     }
 )
-async def list_books(token: str = Depends(verify_authentication)):
-    """List all books - used for authentication validation."""
+async def list_books(current_user: dict = Depends(get_current_user)):
+    """List books owned by the current user."""
     try:
-        books = db_manager.list_books()
-        return {"books": books}
+        # Get books from storage service filtered by user
+        books_response = await book_service.get_books(
+            user_id=current_user["id"],
+            page=1,
+            per_page=100  # Large limit for now
+        )
+        
+        if not books_response:
+            return {"books": []}
+        
+        return books_response
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -887,7 +1824,7 @@ async def submit_book(
     title: str = Form(..., description="Book title (1-255 characters)", example="The Great Gatsby"),
     format: str = Form(..., description="Book format", example="pdf", regex="^(pdf|epub|txt)$"),
     file: UploadFile = File(..., description="Book file to process (max 50MB)"),
-    token: str = Depends(verify_authentication)
+    current_user: dict = Depends(get_current_user)
 ):
     """Submit a book for processing."""
     try:
@@ -924,35 +1861,41 @@ async def submit_book(
                 detail="File too large. Maximum size is 50MB"
             )
         
-        # Create book record in database
-        book_id = db_manager.create_book(
+        # Create book record via storage service
+        book_response = await book_service.create_book(
             title=title,
             format=book_format.value,
-            file_path=""  # Will be set after file is saved
+            user_id=current_user["id"]
         )
         
-        # Save file to storage
-        book_dir = FilePath(f"/data/text/{book_id}")
+        if not book_response:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to create book record in storage service"
+            )
+        
+        book_id = book_response["id"]
+        
+        # Save file to storage (using same pattern as storage service)
+        text_data_path = os.getenv("TEXT_DATA_PATH", "/tmp/data/text")
+        book_dir = FilePath(f"{text_data_path}/uploads/{book_id}")
         book_dir.mkdir(parents=True, exist_ok=True)
         
         file_path = book_dir / file.filename
         with open(file_path, "wb") as f:
             f.write(file_content)
         
-        # Update book record with file path
-        db_manager.update_book_status(
+        # Update book status via storage service
+        status_response = await book_service.update_book_status(
             book_id=book_id,
             status=BookStatus.PENDING.value,
-            percent_complete=0.0
+            user_id=current_user["id"]
         )
         
-        # Store file path in database (update the record)
-        with sqlite3.connect(db_manager.db_path) as conn:
-            conn.execute(
-                "UPDATE books SET file_path = ? WHERE id = ?",
-                (str(file_path), book_id)
-            )
-            conn.commit()
+        if not status_response:
+            print(f"WARNING: Failed to update book status for {book_id}")
+        
+        # TODO: Store file path in storage service (for now, file is stored locally)
         
         # Trigger processing pipeline in the background
         asyncio.create_task(pipeline.start_processing(book_id, str(file_path)))
@@ -975,18 +1918,20 @@ async def submit_book(
 @app.get("/api/v1/books/{book_id}/status", response_model=BookStatusResponse)
 async def get_book_status(
     book_id: str,
-    token: str = Depends(verify_authentication)
+    current_user: dict = Depends(get_current_user)
 ):
     """Get book processing status."""
     try:
-        # Get book from database
-        book = db_manager.get_book(book_id)
+        # Get book from storage service with user ownership check
+        book_response = await book_service.get_book_by_id(book_id, user_id=current_user["id"])
         
-        if not book:
+        if not book_response:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Book with ID {book_id} not found"
+                detail=f"Book with ID {book_id} not found or access denied"
             )
+        
+        book = book_response  # Storage service returns the book data directly
         
         # Get total chunks from storage service if completed
         total_chunks = None
@@ -1018,8 +1963,8 @@ async def get_book_status(
             book_id=book["id"],
             title=book["title"],
             status=BookStatus(book["status"]),
-            percent_complete=book["percent_complete"] or 0.0,
-            error_message=book["error_message"],
+            percent_complete=0.0,  # Storage service doesn't track progress yet
+            error_message=None,    # Storage service doesn't track errors yet
             created_at=book["created_at"],
             updated_at=book["updated_at"],
             total_chunks=total_chunks
@@ -1037,16 +1982,16 @@ async def get_book_status(
 @app.get("/api/v1/books/{book_id}/chunks", response_model=ChunkListResponse)
 async def list_book_chunks(
     book_id: str,
-    token: str = Depends(verify_authentication)
+    current_user: dict = Depends(get_current_user)
 ):
     """List available audio chunks for a book."""
     try:
-        # Check if book exists
-        book = db_manager.get_book(book_id)
-        if not book:
+        # Check if book exists and user has access
+        book_response = await book_service.get_book_by_id(book_id, user_id=current_user["id"])
+        if not book_response:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Book with ID {book_id} not found"
+                detail=f"Book with ID {book_id} not found or access denied"
             )
         
         # Get chunks from storage service
@@ -1103,23 +2048,28 @@ async def generate_chunk_signed_url(
     book_id: str,
     seq: int,
     expires_in: int = Query(3600, description="URL expiration time in seconds"),
-    token: str = Depends(verify_authentication)
+    current_user: dict = Depends(get_current_user)
 ) -> Dict[str, Any]:
     """Generate a signed URL for accessing an audio chunk."""
     print(f"DEBUG: Signed URL endpoint called with book_id={book_id}, seq={seq}, expires_in={expires_in}")
     try:
-        # Verify book exists
-        book = db_manager.get_book(book_id)
-        if not book:
-            print(f"DEBUG: Book {book_id} not found")
+        # Verify book exists and user has access
+        book_response = await book_service.get_book_by_id(book_id, user_id=current_user["id"])
+        if not book_response:
+            print(f"DEBUG: Book {book_id} not found or access denied for user {current_user['id']}")
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Book with ID {book_id} not found"
+                detail=f"Book with ID {book_id} not found or access denied"
             )
         
         print(f"DEBUG: Book {book_id} found, generating signed URL")
+        # Create a session token for the current user (needed for signed URL)
+        user_token = session_manager.create_session_token(
+            user_id=current_user["id"],
+            username=current_user["username"]
+        )
         # Generate signed URL
-        signed_url = generate_signed_url(book_id, seq, token, expires_in)
+        signed_url = generate_signed_url(book_id, seq, user_token, expires_in)
         
         print(f"DEBUG: Generated signed URL: {signed_url}")
         return {
@@ -1494,16 +2444,16 @@ async def get_audio_chunk(
 
 
 @app.get("/debug/books/{book_id}/chunks")
-async def debug_book_chunks(book_id: str):
+async def debug_book_chunks(book_id: str, current_user: dict = Depends(get_current_user)):
     """Debug endpoint to see what's happening with chunks."""
     try:
         print(f"DEBUG: Getting chunks for book {book_id}")
         
-        # Check if book exists
-        book = db_manager.get_book(book_id)
-        print(f"DEBUG: Book found: {book is not None}")
-        if not book:
-            return {"error": "Book not found"}
+        # Check if book exists and user has access
+        book_response = await book_service.get_book_by_id(book_id, user_id=current_user["id"])
+        print(f"DEBUG: Book found: {book_response is not None}")
+        if not book_response:
+            return {"error": "Book not found or access denied"}
         
         # Get chunks from storage service
         storage_url = os.getenv("STORAGE_URL", "http://storage:8001")
@@ -1561,20 +2511,27 @@ async def debug_book_chunks(book_id: str):
 @app.delete("/api/v1/books/{book_id}")
 async def delete_book(
     book_id: str,
-    token: str = Depends(verify_authentication)
+    current_user: dict = Depends(get_current_user)
 ):
     """Delete a book and all its associated data."""
     try:
-        # Check if book exists
-        book = db_manager.get_book(book_id)
-        if not book:
+        # Check if book exists and user has access
+        print(f"DEBUG DELETE: user_id={current_user['id']}, book_id={book_id}")
+        book_response = await book_service.get_book_by_id(book_id, user_id=current_user["id"])
+        print(f"DEBUG DELETE: book_response={book_response}")
+        if not book_response:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Book with ID {book_id} not found"
+                detail=f"Book with ID {book_id} not found or access denied"
             )
         
-        # Delete from main database
-        db_manager.delete_book(book_id)
+        # Delete from storage service
+        delete_response = await book_service.delete_book(book_id, user_id=current_user["id"])
+        if not delete_response:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to delete book from storage service"
+            )
         
         # Clean up storage service chunks
         storage_url = os.getenv("STORAGE_URL", "http://storage:8001")
@@ -1585,12 +2542,15 @@ async def delete_book(
         except Exception as e:
             print(f"Warning: Failed to delete chunks from storage service: {e}")
         
+        # Signal other services to clean up their files
+        await _signal_file_cleanup(book_id, current_user["id"])
+        
         # Clean up files
         import shutil
         file_paths_to_remove = [
             f"/data/text/{book_id}",
-            f"/data/wav/{book_id}",
-            f"/data/ogg/{book_id}"
+            f"/data/wav/{book_id}"
+            # Note: /data/ogg cleanup handled by transcoder service (API has read-only access)
         ]
         
         for path in file_paths_to_remove:
@@ -1601,7 +2561,7 @@ async def delete_book(
             except Exception as e:
                 print(f"Warning: Failed to delete {path}: {e}")
         
-        return {"message": f"Successfully deleted book '{book['title']}' and all associated data"}
+        return {"message": f"Successfully deleted book '{book_response['title']}' and all associated data"}
         
     except HTTPException:
         raise

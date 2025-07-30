@@ -7,6 +7,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y \
     curl \
     sqlite3 \
+    gosu \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements and install Python dependencies
@@ -26,7 +27,6 @@ RUN mkdir -p /data
 # Create non-root user
 RUN useradd --create-home --shell /bin/bash app \
     && chown -R app:app /app /data
-USER app
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \

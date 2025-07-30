@@ -5,12 +5,17 @@ services:
     image: audiobook-api:latest
     expose:
       - "8000"  # Expose to internal network only
+    env_file:
+      - .env
     environment:
-      API_KEY: "${API_KEY}"
       STORAGE_URL: "http://storage:8001"
-      REDIS_URL: "redis://redis:6379"
-      CORS_ORIGINS: "https://evocable.epicrunze.com,http://localhost:3000,http://localhost:8000"
-      API_BASE_URL: "https://server.epicrunze.com"
+      REDIS_URL: "${REDIS_URL}"
+      CORS_ORIGINS: "${CORS_ORIGINS}"
+      API_BASE_URL: "${API_BASE_URL}"
+      DEBUG: "true"
+      SECRET_KEY: "${SECRET_KEY:-your-secret-key-for-jwt-signing}"
+      PASSWORD_RESET_EXPIRY: "${PASSWORD_RESET_EXPIRY:-15}"
+      SIGNED_URL_EXPIRY: "${SIGNED_URL_EXPIRY:-3600}"
     volumes:
       - text_data:/data/text  # Shared text storage for processing pipeline
       - segment_data:/data/ogg:ro  # Read-only access to serve audio chunks
@@ -35,11 +40,14 @@ services:
     user: root
     expose:
       - "8001"  # Expose to internal network only
+    env_file:
+      - .env
     environment:
-      DATABASE_URL: "sqlite:////data/meta/storage.db"
-      TEXT_DATA_PATH: "/data/text"
-      WAV_DATA_PATH: "/data/wav"
-      SEGMENT_DATA_PATH: "/data/ogg"
+      DATABASE_URL: "${DATABASE_URL}"
+      TEXT_DATA_PATH: "${TEXT_DATA_PATH}"
+      WAV_DATA_PATH: "${WAV_DATA_PATH}"
+      SEGMENT_DATA_PATH: "${SEGMENT_DATA_PATH}"
+      META_DATA_PATH: "${META_DATA_PATH}"
     volumes:
       - text_data:/data/text
       - wav_data:/data/wav
@@ -60,6 +68,10 @@ services:
     image: redis:7-alpine
     expose:
       - "6379"  # Expose to internal network only
+    env_file:
+      - .env
+    environment:
+      REDIS_URL: "${REDIS_URL}"
     volumes:
       - redis_data:/data
     restart: unless-stopped
@@ -76,10 +88,13 @@ services:
   ingest:
     build: ./services/ingest
     image: audiobook-ingest:latest
+    env_file:
+      - .env
     environment:
       STORAGE_URL: "http://storage:8001"
-      REDIS_URL: "redis://redis:6379"
-      QUEUE_NAME: "ingest_queue"
+      REDIS_URL: "${REDIS_URL}"
+      QUEUE_NAME: "${INGEST_QUEUE_NAME}"
+      TEXT_DATA_PATH: "${TEXT_DATA_PATH}"
     volumes:
       - text_data:/data/text
     depends_on:
@@ -99,11 +114,14 @@ services:
   segmenter:
     build: ./services/segmenter
     image: audiobook-segmenter:latest
+    env_file:
+      - .env
     environment:
       STORAGE_URL: "http://storage:8001"
-      REDIS_URL: "redis://redis:6379"
-      QUEUE_NAME: "segment_queue"
-      CHUNK_SIZE_CHARS: "800"
+      REDIS_URL: "${REDIS_URL}"
+      QUEUE_NAME: "${SEGMENT_QUEUE_NAME}"
+      CHUNK_SIZE_CHARS: "${CHUNK_SIZE_CHARS}"
+      TEXT_DATA_PATH: "${TEXT_DATA_PATH}"
     volumes:
       - text_data:/data/text:ro
     depends_on:
@@ -123,12 +141,17 @@ services:
   tts-worker:
     build: ./services/tts-worker
     image: audiobook-tts:latest
+    env_file:
+      - .env
     environment:
       STORAGE_URL: "http://storage:8001"
-      REDIS_URL: "redis://redis:6379"
-      QUEUE_NAME: "tts_queue"
+      REDIS_URL: "${REDIS_URL}"
+      QUEUE_NAME: "${TTS_QUEUE_NAME}"
       TTS_MODEL: "tts_models/en/ljspeech/tacotron2-DDC"
-      WAV_DATA_PATH: "/data/wav"
+      WAV_DATA_PATH: "${WAV_DATA_PATH}"
+      MODEL_PATH: "${MODEL_PATH}"
+      NVIDIA_VISIBLE_DEVICES: "${NVIDIA_VISIBLE_DEVICES}"
+      NVIDIA_DRIVER_CAPABILITIES: "${NVIDIA_DRIVER_CAPABILITIES}"
     volumes:
       - text_data:/data/text:ro  # Read SSML chunks
       - wav_data:/data/wav       # Write WAV files
@@ -149,12 +172,16 @@ services:
   transcoder:
     build: ./services/transcoder
     image: audiobook-transcoder:latest
+    env_file:
+      - .env
     environment:
       STORAGE_URL: "http://storage:8001"
-      REDIS_URL: "redis://redis:6379"
-      QUEUE_NAME: "transcode_queue"
-      SEGMENT_DURATION: "3.14"
-      OPUS_BITRATE: "32k"
+      REDIS_URL: "${REDIS_URL}"
+      QUEUE_NAME: "${TRANSCODE_QUEUE_NAME}"
+      SEGMENT_DURATION: "${SEGMENT_DURATION}"
+      OPUS_BITRATE: "${OPUS_BITRATE}"
+      WAV_DATA_PATH: "${WAV_DATA_PATH}"
+      SEGMENT_DATA_PATH: "${SEGMENT_DATA_PATH}"
     volumes:
       - wav_data:/data/wav:ro
       - segment_data:/data/ogg
@@ -170,6 +197,37 @@ services:
       timeout: 10s
       retries: 3
       start_period: 30s
+
+  # Test runner service - runs tests inside Docker network
+  test:
+    build: 
+      context: .
+      dockerfile: Dockerfile.test
+    env_file:
+      - .env
+    environment:
+      SECRET_KEY: "${SECRET_KEY:-test-jwt-secret-key-change-in-production}"
+      DATABASE_PATH: "/tmp/test_audiobooks.db"
+      DATABASE_URL: "sqlite:///:memory:"
+      REDIS_URL: "${REDIS_URL}"
+      STORAGE_URL: "http://storage:8001"  # Internal HTTP for storage service
+      INGEST_URL: "http://ingest:8002"
+      CORS_ORIGINS: "${CORS_ORIGINS}"
+      DEBUG: "true"
+      PASSWORD_RESET_EXPIRY: "${PASSWORD_RESET_EXPIRY:-15}"
+      RATE_LIMIT_STORAGE_URL: "${REDIS_URL}"
+      API_BASE_URL: "${API_BASE_URL}"  # Use environment variable from .env
+    volumes:
+      - .:/app
+      - /app/ENV
+    depends_on:
+      - api
+      - storage  # Back to regular storage dependency
+      - redis
+    networks:
+      - evocable-network
+      - default
+    command: ["python", "tests/run_tests.py"]
 
 volumes:
   text_data:

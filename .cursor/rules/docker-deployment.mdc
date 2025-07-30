@@ -1,8 +1,7 @@
 ---
-globs: services/**/Dockerfile,docker-compose*.yml,*.sh
-description: Docker and deployment practices for backend services
+globs: docker-compose*,Dockerfile*,.env*,*.conf,setup-*.sh
+alwaysApply: false
 ---
-
 # Docker & Deployment Guide
 
 ## Docker Compose Architecture
@@ -26,6 +25,47 @@ Services have health checks and dependencies:
 - **TTS-Worker**: Requires GPU access and CUDA drivers
 - **Shared Volumes**: `/data/text`, `/data/wav`, `/data/ogg`, `/data/meta`
 
+## Authentication System
+The API uses a modern JWT-based authentication system with multiple authentication methods:
+
+### Login Methods
+- **Email/Password Login**: `POST /auth/login/email` - User authentication with email and password
+- **API Key Login**: `POST /auth/login` - Legacy API key authentication (backward compatibility)
+
+### Authentication Flow
+```bash
+# 1. Register a new user (email/password)
+curl -X POST ${API_BASE_URL}/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{
+    "username": "testuser",
+    "email": "test@example.com", 
+    "password": "SecurePass123!",
+    "confirm_password": "SecurePass123!"
+  }'
+
+# 2. Login to get session token
+curl -X POST ${API_BASE_URL}/auth/login/email \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "test@example.com",
+    "password": "SecurePass123!",
+    "remember": false
+  }'
+
+# 3. Use session token for API calls
+curl -X GET ${API_BASE_URL}/auth/profile \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+```
+
+### Security Features
+- **JWT Session Tokens**: Secure, stateless authentication with configurable expiry
+- **Password Strength Validation**: Enforces strong passwords with multiple character requirements
+- **Token Refresh**: `POST /auth/refresh` endpoint for extending sessions
+- **Password Reset**: Secure token-based password reset flow
+- **User Profile Management**: Full CRUD operations for user accounts
+- **Bearer Token Authentication**: Standard Authorization header with Bearer scheme
+
 ## Dockerfile Patterns
 Each service follows this structure:
 ```dockerfile
@@ -44,7 +84,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . /app
 WORKDIR /app
 
-# Health check
+# Health check (uses internal container networking)
 HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
     CMD python -c "import requests; requests.get('http://localhost:8000/health')"
 
@@ -54,8 +94,12 @@ CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
 ## Environment Configuration
 Key environment variables:
 ```bash
-# Authentication
-API_KEY=your-secure-api-key
+# JWT Authentication (New Login-Based System)
+SECRET_KEY=your-jwt-secret-key-change-in-production-256-bit
+PASSWORD_RESET_EXPIRY=15  # Password reset token expiry in minutes (15 minutes)
+
+# API Base URL (configurable for different environments)
+API_BASE_URL=https://server.epicrunze.com  # Production
 
 # Service URLs (Docker internal networking)
 STORAGE_URL=http://storage:8001
@@ -83,6 +127,24 @@ docker-compose exec api bash          # Enter API container
 docker-compose logs -f tts-worker     # View TTS logs
 docker-compose restart segmenter     # Restart specific service
 
+# Authentication testing (requires running services and API_BASE_URL set)
+# Set API base URL for testing
+export API_BASE_URL=http://localhost:8000  # or your configured URL
+
+# Test user registration
+curl -X POST ${API_BASE_URL}/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{"username":"testuser","email":"test@example.com","password":"SecurePass123!","confirm_password":"SecurePass123!"}'
+
+# Test login and get session token
+curl -X POST ${API_BASE_URL}/auth/login/email \
+  -H "Content-Type: application/json" \
+  -d '{"email":"test@example.com","password":"SecurePass123!"}'
+
+# Test API access with Bearer token
+curl -X GET ${API_BASE_URL}/auth/profile \
+  -H "Authorization: Bearer YOUR_SESSION_TOKEN"
+
 # Cleanup
 docker-compose down                   # Stop services
 docker-compose down -v               # Stop and remove volumes
@@ -101,3 +163,35 @@ Shared volumes enable data flow between services:
 - Configure log aggregation and monitoring
 - Ensure GPU drivers installed on host for TTS service
 - Set up backup strategy for persistent volumes
+
+### Authentication Security for Production
+- **SECRET_KEY**: Generate a cryptographically secure 256-bit key for JWT signing
+  ```bash
+  openssl rand -hex 32  # Generate secure secret key
+  ```
+- **Password Security**: Configure strong password requirements via environment variables
+- **Token Expiry**: Set appropriate session token expiry times (default: 24 hours, remember: 30 days)
+- **HTTPS Required**: All authentication endpoints must use HTTPS in production
+- **Database Security**: Ensure user database (SQLite) is properly secured and backed up
+
+### User Service Integration
+The authentication system integrates with the Storage service for user management:
+- **User Database**: SQLite database stores user accounts, profiles, and authentication data
+- **Password Hashing**: Uses bcrypt with adaptive cost factor (12 rounds)
+- **Service Communication**: API service communicates with Storage service at `http://storage:8001`
+- **User Verification**: Email verification and password reset functionality
+- **Profile Management**: Full user profile CRUD operations via Storage service
+
+### Required Environment Variables for Production
+```bash
+# Critical security settings
+SECRET_KEY=your-production-jwt-secret-key-256-bit
+PASSWORD_RESET_EXPIRY=15  # 15 minutes
+
+# API configuration
+API_BASE_URL=https://api.yourdomain.com  # Production API URL
+
+# Service integration
+STORAGE_URL=http://storage:8001
+REDIS_URL=redis://redis:6379
+```

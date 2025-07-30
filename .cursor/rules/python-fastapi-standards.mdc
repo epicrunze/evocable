@@ -1,8 +1,8 @@
 ---
-globs: services/**/*.py
 description: Python and FastAPI coding standards for backend services
+globs: services/**/*.py
+alwaysApply: false
 ---
-
 # Python & FastAPI Backend Standards
 
 ## FastAPI Service Structure

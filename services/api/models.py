@@ -1,5 +1,6 @@
 """Data models and schemas for the Audiobook API service."""
 
+import os
 import uuid
 from datetime import datetime
 from enum import Enum
@@ -167,14 +168,27 @@ class ErrorResponse(BaseModel):
 class DatabaseManager:
     """SQLite database manager for audiobook metadata."""
     
-    def __init__(self, db_path: str = "/data/meta/audiobooks.db"):
+    def __init__(self, db_path: str = None):
+        # Use environment variable or default to in-memory database for testing
+        if db_path is None:
+            db_path = os.getenv("DATABASE_URL", "sqlite:///:memory:")
+            if db_path.startswith("sqlite:///"):
+                db_path = db_path.replace("sqlite:///", "")
+                if db_path == ":memory:":
+                    db_path = ":memory:"
+                else:
+                    # Ensure directory exists for file-based databases
+                    Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+        
         self.db_path = db_path
         self.init_database()
     
     def init_database(self):
         """Initialize the database with required tables."""
-        # Ensure directory exists
-        Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
+        # For in-memory databases, no directory creation needed
+        if self.db_path != ":memory:":
+            # Ensure directory exists for file-based databases
+            Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
         
         with sqlite3.connect(self.db_path) as conn:
             # Enable foreign key constraints

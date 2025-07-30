@@ -9,22 +9,99 @@ description: Service-specific implementation patterns and considerations
 **Key Files**: [main.py](mdc:services/api/main.py), [auth_models.py](mdc:services/api/auth_models.py)
 
 ```python
-# Authentication pattern
+# JWT-based Authentication Pattern with Session Management
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from auth_models import SessionManager, User
+from typing import Optional
+
+security = HTTPBearer()
+session_manager = SessionManager()
+
+async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)) -> Optional[User]:
+    """
+    Authenticate user with JWT session token or legacy API key.
+    Returns User object if authentication successful, None otherwise.
+    """
+    token = credentials.credentials
+    
+    # Try JWT session token first (new login-based auth)
+    user_data = await session_manager.get_user_from_token(token)
+    if user_data:
+        return User(id=user_data["id"], username=user_data["username"])
+    
+    # Fallback to legacy API key authentication
+    if token == os.getenv("API_KEY"):
+        return User(id="00000000-0000-0000-0000-000000000001", username="admin")
+    
+    return None
+
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
-    if request.url.path.startswith("/api/"):
+    """Enhanced authentication middleware with user context."""
+    # Skip auth for health checks and auth endpoints
+    if request.url.path in ["/health", "/auth/register", "/auth/login/email", "/auth/login"]:
+        response = await call_next(request)
+        return response
+    
+    # Require authentication for protected API endpoints
+    if request.url.path.startswith("/api/") or request.url.path.startswith("/auth/"):
         auth_header = request.headers.get("Authorization")
         if not auth_header or not auth_header.startswith("Bearer "):
-            raise HTTPException(401, "Missing or invalid API key")
+            raise HTTPException(401, {"error": "Missing or invalid authorization header"})
+        
+        token = auth_header.replace("Bearer ", "")
+        
+        # Validate token and get user
+        user_data = await session_manager.get_user_from_token(token)
+        if not user_data and token != os.getenv("API_KEY"):
+            raise HTTPException(401, {"error": "Invalid or expired session token"})
+        
+        # Add user context to request state
+        request.state.user = user_data
+        request.state.authenticated = True
     
     response = await call_next(request)
     return response
 
-# Background task pattern for processing
+# Protected endpoint pattern with user context
+@app.get("/api/v1/books")
+async def list_books(current_user: User = Depends(get_current_user)):
+    """List books for authenticated user."""
+    if not current_user:
+        raise HTTPException(401, "Authentication required")
+    
+    # Access user info: current_user.id, current_user.username
+    return await storage_service.get_user_books(current_user.id)
+
+# Background task pattern for processing with user context
 @app.post("/api/v1/books")
-async def create_book(background_tasks: BackgroundTasks):
-    background_tasks.add_task(trigger_processing_pipeline, book_id)
-    return {"book_id": book_id, "status": "processing"}
+async def create_book(
+    background_tasks: BackgroundTasks, 
+    current_user: User = Depends(get_current_user)
+):
+    """Create and process a book for the authenticated user."""
+    if not current_user:
+        raise HTTPException(401, "Authentication required")
+    
+    # Create book associated with user
+    book_id = await storage_service.create_book(
+        user_id=current_user.id,
+        title=book_data.title,
+        content=book_data.content
+    )
+    
+    # Trigger processing pipeline with user context
+    background_tasks.add_task(
+        trigger_processing_pipeline, 
+        book_id=book_id, 
+        user_id=current_user.id
+    )
+    
+    return {
+        "book_id": book_id, 
+        "user_id": current_user.id,
+        "status": "processing"
+    }
 ```
 
 ## Storage Service ([services/storage/](mdc:services/storage/))
@@ -32,17 +109,41 @@ async def create_book(background_tasks: BackgroundTasks):
 **Pattern**: Centralized data layer with REST API
 
 ```python
-# Database schema management
+# Database schema management with user authentication
+class User(BaseModel):
+    id: str
+    username: str
+    email: str
+    is_active: bool = True
+    is_verified: bool = False
+    created_at: datetime
+    updated_at: datetime
+
 class Book(BaseModel):
     id: str
     title: str
+    user_id: str  # Associate books with users
     status: BookStatus
     total_duration_s: float = 0.0
     chunks: List[AudioChunk] = []
+    created_at: datetime
 
-# File system operations
-async def save_audio_chunk(book_id: str, seq: int, audio_data: bytes):
-    chunk_path = f"/data/ogg/{book_id}/chunk_{seq:04d}.ogg"
+# User service operations
+async def authenticate_user(email: str, password: str) -> Optional[User]:
+    """Authenticate user with email/password."""
+    user = await get_user_by_email(email)
+    if user and verify_password(password, user.password_hash):
+        return user
+    return None
+
+async def get_user_books(user_id: str) -> List[Book]:
+    """Get all books for a specific user."""
+    return await db.query(Book).filter(Book.user_id == user_id).all()
+
+# File system operations with user context
+async def save_audio_chunk(book_id: str, user_id: str, seq: int, audio_data: bytes):
+    # Organize files by user for better security and organization
+    chunk_path = f"/data/ogg/{user_id}/{book_id}/chunk_{seq:04d}.ogg"
     os.makedirs(os.path.dirname(chunk_path), exist_ok=True)
     with open(chunk_path, "wb") as f:
         f.write(audio_data)
@@ -187,15 +288,22 @@ async def process_service_queue(queue_name: str):
         if message:
             try:
                 data = json.loads(message[1])
+                
+                # Validate required user context
+                if "user_id" not in data:
+                    raise ValueError("Missing user_id in message")
+                
                 await process_message(data)
                 
-                # Queue for next service
+                # Queue for next service with user context preserved
                 await redis.lpush("next_queue", json.dumps({
                     "book_id": data["book_id"],
-                    "status": "completed"
+                    "user_id": data["user_id"],  # Preserve user context
+                    "status": "completed",
+                    "timestamp": datetime.utcnow().isoformat()
                 }))
             except Exception as e:
-                # Handle processing errors
+                # Handle processing errors with user context
                 await handle_processing_error(data, str(e))
 ```
 
@@ -203,10 +311,12 @@ async def process_service_queue(queue_name: str):
 ```python
 @app.get("/health")
 async def health_check():
-    # Verify service dependencies
+    # Verify service dependencies including authentication
     checks = {
         "redis": await check_redis_connection(),
         "storage": await check_storage_connection(),
+        "auth": await check_auth_system(),
+        "jwt": check_jwt_configuration(),
         "gpu": torch.cuda.is_available() if GPU_REQUIRED else True
     }
     
@@ -214,4 +324,19 @@ async def health_check():
         return {"status": "healthy", "checks": checks}
     else:
         raise HTTPException(503, {"status": "unhealthy", "checks": checks})
+
+async def check_auth_system():
+    """Check if authentication system is working."""
+    try:
+        # Test JWT token generation/validation
+        test_token, _ = session_manager.create_session_token("test-user-id")
+        payload = session_manager.validate_session_token(test_token)
+        return payload is not None
+    except Exception:
+        return False
+
+def check_jwt_configuration():
+    """Verify JWT configuration is proper."""
+    secret_key = os.getenv("SECRET_KEY")
+    return secret_key is not None and len(secret_key) >= 32
 ```

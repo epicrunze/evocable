@@ -322,6 +322,71 @@ class AudioTranscoder:
             "version": "1.0.0"
         }
     
+    async def process_cleanup_queue(self):
+        """Process cleanup requests to delete OGG files for deleted books."""
+        logger.info("Starting cleanup queue processing")
+        
+        while True:
+            try:
+                # Check for cleanup tasks in the queue (blocking with timeout)
+                task_data = await self.redis_client.brpop("cleanup_queue", timeout=30)
+                
+                if task_data:
+                    queue_name, task_json = task_data
+                    logger.info(f"Processing cleanup task: {task_json}")
+                    
+                    try:
+                        import json
+                        import shutil
+                        task = json.loads(task_json)
+                        book_id = task.get("book_id")
+                        action = task.get("action")
+                        
+                        if book_id and action == "cleanup_files":
+                            # Delete OGG files for this book
+                            book_ogg_dir = self.ogg_data_path / book_id
+                            if book_ogg_dir.exists():
+                                shutil.rmtree(book_ogg_dir)
+                                logger.info(f"Successfully cleaned up OGG files for book {book_id}")
+                                success = True
+                            else:
+                                logger.info(f"No OGG files found for book {book_id} (already cleaned or never created)")
+                                success = True
+                            
+                            # Send completion acknowledgment
+                            completion_data = {
+                                "book_id": book_id,
+                                "service": "transcoder",
+                                "success": success,
+                                "timestamp": task.get("timestamp"),
+                                "files_cleaned": "ogg"
+                            }
+                            
+                            await self.redis_client.lpush(
+                                "cleanup_completed",
+                                json.dumps(completion_data)
+                            )
+                            
+                            logger.info(f"Sent cleanup completion acknowledgment for book {book_id}")
+                            
+                    except Exception as e:
+                        logger.error(f"Error processing cleanup task: {e}")
+                        # Still send a completion acknowledgment with error
+                        try:
+                            error_data = {
+                                "book_id": task.get("book_id", "unknown"),
+                                "service": "transcoder",
+                                "success": False,
+                                "error": str(e)
+                            }
+                            await self.redis_client.lpush("cleanup_completed", json.dumps(error_data))
+                        except:
+                            pass
+                            
+            except Exception as e:
+                logger.error(f"Error in cleanup queue processing: {e}")
+                await asyncio.sleep(10)  # Wait before retrying
+
     async def cleanup(self):
         """Cleanup resources."""
         await self.http_client.aclose()
@@ -340,9 +405,12 @@ async def main():
     
     logger.info("Transcoder service ready")
     
-    # Start queue processing
+    # Start both transcoding and cleanup queue processing concurrently
     try:
-        await transcoder.process_transcode_queue()
+        await asyncio.gather(
+            transcoder.process_transcode_queue(),
+            transcoder.process_cleanup_queue()
+        )
     finally:
         await transcoder.cleanup()
 

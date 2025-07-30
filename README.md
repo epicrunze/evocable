@@ -12,7 +12,7 @@ Evocable Backend is a production-ready microservices system that processes docum
 - **Advanced Audio Streaming**: Chunk-based streaming API with seeking support
 - **Real-time Status Updates**: Live processing progress with detailed status information
 - **RESTful API**: Complete API for external client integration
-- **Secure Authentication**: API key-based authentication system
+- **Secure Authentication**: User-based authentication with JWT tokens
 - **Scalable Architecture**: Microservices with Redis message queuing
 
 ## 🏗️ Architecture Overview
@@ -119,7 +119,7 @@ docker-compose down -v
 
 ### API Gateway (services/api/)
 - **FastAPI** with async request handling
-- **Authentication** via API key validation
+- **Authentication** via JWT session tokens and user management
 - **WebSocket Support** for real-time updates
 - **Background Tasks** for processing coordination
 - **RESTful Endpoints** for all client interactions
@@ -172,11 +172,56 @@ Document Upload → Text Extraction → Segmentation → TTS Processing → Tran
 ## 📡 API Reference
 
 ### Authentication
-All API requests require authentication via API key:
+
+The API uses a secure user-based authentication system with JWT session tokens. All API requests require authentication via session tokens obtained through login.
+
+#### **User Authentication System**
+
+**Getting Started:**
 ```bash
-curl -H "Authorization: Bearer YOUR_API_KEY" \
-     http://localhost:8000/api/v1/books
+# 1. Register a new user account
+curl -X POST https://server.epicrunze.com/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{
+    "username": "myuser",
+    "email": "user@example.com",
+    "password": "MySecurePass123!",
+    "confirm_password": "MySecurePass123!"
+  }'
+
+# 2. Login to get session token
+curl -X POST https://server.epicrunze.com/auth/login/email \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "user@example.com",
+    "password": "MySecurePass123!",
+    "remember": false
+  }'
+
+# Response includes sessionToken
+# {
+#   "sessionToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+#   "expiresAt": "2024-01-16T10:30:00Z",
+#   "user": { "id": "...", "username": "myuser" }
+# }
+
+# 3. Use session token in API requests
+curl -H "Authorization: Bearer <session-token>" \
+     https://server.epicrunze.com/api/v1/books
 ```
+
+#### **Authentication Features**
+
+- **User Registration**: Create new accounts with email/password
+- **Profile Management**: Update user information and change passwords  
+- **Password Reset**: Secure password reset via email tokens
+- **Session Management**: Token refresh and secure logout
+- **Rate Limiting**: Protection against brute force attacks
+
+**📚 Full API Reference:** See [Authentication API Documentation](docs/authentication_api.md) for complete endpoint details.
+
+#### **Legacy API Key Support (DEPRECATED)**
+
 
 ### Core Endpoints
 
@@ -184,7 +229,7 @@ curl -H "Authorization: Bearer YOUR_API_KEY" \
 ```http
 POST /api/v1/books
 Content-Type: multipart/form-data
-Authorization: Bearer YOUR_API_KEY
+Authorization: Bearer <session-token>
 
 # Form fields:
 # - title: string (optional)
@@ -204,7 +249,7 @@ Authorization: Bearer YOUR_API_KEY
 #### **Check Processing Status**
 ```http
 GET /api/v1/books/{book_id}/status
-Authorization: Bearer YOUR_API_KEY
+Authorization: Bearer <session-token>
 ```
 
 **Response:**
@@ -223,7 +268,7 @@ Authorization: Bearer YOUR_API_KEY
 #### **List Audio Chunks**
 ```http
 GET /api/v1/books/{book_id}/chunks
-Authorization: Bearer YOUR_API_KEY
+Authorization: Bearer <session-token>
 ```
 
 **Response:**
@@ -245,7 +290,7 @@ Authorization: Bearer YOUR_API_KEY
 #### **Stream Audio Chunk**
 ```http
 GET /api/v1/books/{book_id}/chunks/{seq}
-Authorization: Bearer YOUR_API_KEY
+Authorization: Bearer <session-token>
 Accept: audio/ogg
 ```
 
@@ -254,7 +299,7 @@ Accept: audio/ogg
 #### **List All Books**
 ```http
 GET /api/v1/books
-Authorization: Bearer YOUR_API_KEY
+Authorization: Bearer <session-token>
 ```
 
 **Response:**
@@ -350,28 +395,7 @@ docker-compose exec storage python -m pytest
 
 # Health check all services
 docker-compose ps
-```
 
-## 🔧 Configuration
-
-### Environment Variables
-```bash
-# Core Configuration
-API_KEY=your-secure-api-key-here
-REDIS_URL=redis://redis:6379
-
-# Service URLs (Docker internal)
-STORAGE_URL=http://storage:8001
-
-# TTS Configuration
-TTS_MODEL=tts_models/en/ljspeech/tacotron2-DDC
-CHUNK_SIZE_CHARS=800
-SEGMENT_DURATION=3.14
-OPUS_BITRATE=32k
-
-# CORS Configuration
-CORS_ORIGINS=http://localhost:3000,https://yourapp.com
-```
 
 ### Docker Compose Services
 ```yaml
@@ -496,7 +520,7 @@ docker-compose exec redis redis-cli monitor
 - ✅ **High-Quality TTS**: Tacotron2-DDC model integration
 - ✅ **Streaming Audio**: Opus-encoded chunk-based delivery
 - ✅ **RESTful API**: Complete API for external client integration
-- ✅ **Authentication**: Secure API key-based access
+- ✅ **Authentication**: Secure user-based authentication with JWT tokens
 - ✅ **Real-time Updates**: Live processing status via REST and WebSocket
 - ✅ **Production Ready**: Docker orchestration with health checks
 - ✅ **Comprehensive Testing**: Backend API test coverage

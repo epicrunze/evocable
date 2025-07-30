@@ -5,6 +5,11 @@ description: Backend microservices architecture and service communication
 
 # Backend Architecture Guide
 
+## Development Environment
+- **Python Virtual Environment**: `ENV` - Used for local development and testing
+  - Activate with: `source /data/epicrunze/Projects/evocable/ENV/bin/activate`
+  - Contains all Python dependencies for backend services
+
 ## Service Overview
 The backend uses a microservices architecture with 6 specialized services:
 
@@ -27,3 +32,5 @@ Upload → [API] → [Ingest] → [Segmenter] → [TTS-Worker] → [Transcoder] 
 ```
 
 Each service communicates via Redis queues and updates processing status in the Storage service.
+
+The API can be accessed at the environment variable defined in .env, API_BASE_URL

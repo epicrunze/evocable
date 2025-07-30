@@ -1,13 +1,43 @@
 #!/bin/bash
 set -e
 
-# Ensure /data/meta is owned by the app user
-chown -R app:app /data/meta
-chmod -R 755 /data/meta
+# Get environment variables or use defaults
+TEXT_DATA_PATH="${TEXT_DATA_PATH:-/data/text}"
+WAV_DATA_PATH="${WAV_DATA_PATH:-/data/wav}"
+SEGMENT_DATA_PATH="${SEGMENT_DATA_PATH:-/data/ogg}"
+META_DATA_PATH="${META_DATA_PATH:-/data/meta}"
 
-# Optionally fix other /data subdirs
-chown -R app:app /data/text /data/wav /data/ogg || true
-chmod -R 755 /data/text /data/wav /data/ogg || true
+# Extract database directory from DATABASE_URL if file-based  
+DATABASE_URL="${DATABASE_URL:-sqlite:///data/meta/audiobooks.db}"
+if [[ "$DATABASE_URL" == sqlite:///* ]] && [[ "$DATABASE_URL" != *":memory:" ]]; then
+    DB_FILE="${DATABASE_URL#sqlite:///}"
+    DB_DIR="$(dirname "$DB_FILE")"
+    # Ensure database directory exists
+    mkdir -p "$DB_DIR"
+fi
 
-# Run the main application (as app user)
-exec "$@" 
+# Create directories if they don't exist
+mkdir -p "$META_DATA_PATH" "$TEXT_DATA_PATH" "$WAV_DATA_PATH" "$SEGMENT_DATA_PATH"
+
+# Ensure the directories have proper permissions (readable/writable)
+chmod -R 755 "$META_DATA_PATH" "$TEXT_DATA_PATH" "$WAV_DATA_PATH" "$SEGMENT_DATA_PATH" 2>/dev/null || true
+
+# Create the database file if it doesn't exist and set permissions
+if [[ "$DATABASE_URL" == sqlite:///* ]] && [[ "$DATABASE_URL" != *":memory:" ]]; then
+    if [ ! -f "$DB_FILE" ]; then
+        touch "$DB_FILE"
+        chmod 666 "$DB_FILE"
+    fi
+fi
+
+# Ensure app user owns all data directories
+ALL_PATHS="$META_DATA_PATH $TEXT_DATA_PATH $WAV_DATA_PATH $SEGMENT_DATA_PATH"
+if [[ "$DATABASE_URL" == sqlite:///* ]] && [[ "$DATABASE_URL" != *":memory:" ]]; then
+    ALL_PATHS="$ALL_PATHS $DB_DIR"
+fi
+for path in $ALL_PATHS; do
+    chown -R app:app "$path" 2>/dev/null || true
+done
+
+# Switch to app user and run the main application
+exec gosu app "$@" 

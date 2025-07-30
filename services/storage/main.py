@@ -1,16 +1,23 @@
 """FastAPI application for Audiobook Server Storage Service."""
 
 import os
-from typing import Dict, Any
+import uuid
+from typing import Dict, Any, List
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
-from sqlalchemy import create_engine, Column, String, Integer, DateTime, Text
+from fastapi import FastAPI, HTTPException, Query, status
+from sqlalchemy import create_engine, Column, String, Integer, DateTime, Text, Boolean, ForeignKey
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from datetime import datetime
 from sqlalchemy import text
 from pydantic import BaseModel
+
+# Import user service and models
+from user_service import UserService, UserCreateRequest, UserUpdateRequest, UserResponse
+
+# Import book service and models
+from book_service import BookService, BookCreateRequest, BookUpdateRequest, BookResponse, BookListResponse
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -18,6 +25,12 @@ app = FastAPI(
     description="Centralized storage and metadata management",
     version="1.0.0",
 )
+
+
+@app.on_event("startup")
+async def startup_event():
+    """Initialize database on application startup."""
+    init_database()
 
 # Pydantic models for request/response
 class TextData(BaseModel):
@@ -61,6 +74,20 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
 
+class User(Base):
+    """User model for authentication."""
+    __tablename__ = "users"
+    
+    id = Column(String, primary_key=True, index=True, default=lambda: str(uuid.uuid4()))
+    username = Column(String, unique=True, index=True, nullable=False)
+    email = Column(String, unique=True, index=True, nullable=False)
+    password_hash = Column(String, nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False)
+    is_verified = Column(Boolean, default=False, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
 class Book(Base):
     """Book model for database."""
     __tablename__ = "books"
@@ -69,6 +96,7 @@ class Book(Base):
     title = Column(String, index=True)
     format = Column(String)  # pdf, epub, txt
     status = Column(String)  # processing, completed, failed
+    user_id = Column(String, ForeignKey("users.id"), nullable=False, index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -85,8 +113,55 @@ class Chunk(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
-# Create tables
-Base.metadata.create_all(bind=engine)
+def init_database():
+    """Initialize database tables and default data."""
+    # Create tables
+    Base.metadata.create_all(bind=engine)
+    # Create default admin user
+    create_default_admin_user()
+
+
+def create_default_admin_user():
+    """Create a default admin user if none exists."""
+    from passlib.context import CryptContext
+    
+    pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+    db = SessionLocal()
+    
+    try:
+        # Check if admin user already exists
+        admin_user = db.query(User).filter(User.username == "admin").first()
+        if not admin_user:
+            # Get admin password from environment or use default
+            admin_password = os.getenv("ADMIN_PASSWORD", "admin123!")
+            password_hash = pwd_context.hash(admin_password)
+            
+            # Create default admin user
+            admin_user = User(
+                id="00000000-0000-0000-0000-000000000001",  # Fixed UUID for admin
+                username="admin",
+                email="admin@example.com",  # Changed to valid domain
+                password_hash=password_hash,
+                is_active=True,
+                is_verified=True,
+                created_at=datetime.utcnow(),
+                updated_at=datetime.utcnow()
+            )
+            db.add(admin_user)
+            db.commit()
+            print("✅ Created default admin user (admin@example.com)")  # Updated message
+            if admin_password == "admin123!":
+                print("⚠️ Using default admin password - set ADMIN_PASSWORD environment variable for production")
+        else:
+            print("ℹ️ Admin user already exists")
+    except Exception as e:
+        print(f"⚠️ Error creating admin user: {e}")
+        db.rollback()
+    finally:
+        db.close()
+
+
+# Database initialization will be called during FastAPI startup
 
 
 def get_db():
@@ -352,6 +427,361 @@ async def delete_audio_chunks(book_id: str) -> Dict[str, str]:
             
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to delete audio chunks: {str(e)}")
+
+
+# User Management Endpoints
+
+@app.post("/users", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+async def create_user(user_data: UserCreateRequest) -> UserResponse:
+    """Create a new user account."""
+    db = SessionLocal()
+    try:
+        user_service = UserService(db)
+        user_response = await user_service.create_user(user_data)
+        return user_response
+        
+    except ValueError as e:
+        # Handle validation errors from user service
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, 
+                          detail=f"Failed to create user: {str(e)}")
+    finally:
+        db.close()
+
+
+@app.post("/users/authenticate")
+async def authenticate_user(email: str, password: str) -> Dict[str, Any]:
+    """Authenticate user with email and password."""
+    db = SessionLocal()
+    try:
+        user_service = UserService(db)
+        authenticated_user = user_service.authenticate_user(email, password)
+        
+        if authenticated_user:
+            return {
+                "success": True,
+                "user": {
+                    "id": authenticated_user.id,
+                    "username": authenticated_user.username,
+                    "email": authenticated_user.email,
+                    "is_active": authenticated_user.is_active,
+                    "is_verified": authenticated_user.is_verified
+                }
+            }
+        else:
+            return {"success": False, "user": None}
+            
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                          detail=f"Authentication failed: {str(e)}")
+    finally:
+        db.close()
+
+
+@app.get("/users/{user_id}", response_model=UserResponse)
+async def get_user(user_id: str) -> UserResponse:
+    """Get user by ID."""
+    db = SessionLocal()
+    try:
+        user_service = UserService(db)
+        user_response = await user_service.get_user_by_id(user_id)
+        
+        if not user_response:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+        
+        return user_response
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                          detail=f"Failed to get user: {str(e)}")
+    finally:
+        db.close()
+
+
+@app.put("/users/{user_id}", response_model=UserResponse)
+async def update_user(user_id: str, update_data: UserUpdateRequest) -> UserResponse:
+    """Update user profile."""
+    db = SessionLocal()
+    try:
+        user_service = UserService(db)
+        updated_user = await user_service.update_user(user_id, update_data)
+        
+        if not updated_user:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+        
+        return updated_user
+        
+    except ValueError as e:
+        # Handle validation errors (duplicate username/email)
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                          detail=f"Failed to update user: {str(e)}")
+    finally:
+        db.close()
+
+
+@app.post("/users/{user_id}/change-password")
+async def change_user_password(user_id: str, current_password: str, new_password: str) -> Dict[str, str]:
+    """Change user password."""
+    db = SessionLocal()
+    try:
+        user_service = UserService(db)
+        success = await user_service.change_password(user_id, current_password, new_password)
+        
+        if success:
+            return {"message": "Password changed successfully"}
+        else:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, 
+                              detail="Current password is incorrect")
+        
+    except ValueError as e:
+        # Password validation errors
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                          detail=f"Failed to change password: {str(e)}")
+    finally:
+        db.close()
+
+
+@app.post("/users/{user_id}/deactivate")
+async def deactivate_user(user_id: str) -> Dict[str, str]:
+    """Deactivate user account."""
+    db = SessionLocal()
+    try:
+        user_service = UserService(db)
+        success = await user_service.deactivate_user(user_id)
+        
+        if success:
+            return {"message": "User deactivated successfully"}
+        else:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                          detail=f"Failed to deactivate user: {str(e)}")
+    finally:
+        db.close()
+
+
+@app.post("/users/{user_id}/activate")
+async def activate_user(user_id: str) -> Dict[str, str]:
+    """Activate user account."""
+    db = SessionLocal()
+    try:
+        user_service = UserService(db)
+        success = await user_service.activate_user(user_id)
+        
+        if success:
+            return {"message": "User activated successfully"}
+        else:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                          detail=f"Failed to activate user: {str(e)}")
+    finally:
+        db.close()
+
+
+@app.get("/users", response_model=List[UserResponse])
+async def list_users(skip: int = 0, limit: int = 100, active_only: bool = True) -> List[UserResponse]:
+    """List users with pagination."""
+    db = SessionLocal()
+    try:
+        user_service = UserService(db)
+        users = await user_service.list_users(skip=skip, limit=limit, active_only=active_only)
+        return users
+        
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                          detail=f"Failed to list users: {str(e)}")
+    finally:
+        db.close()
+
+
+@app.get("/users/by-email/{email}", response_model=UserResponse)
+async def get_user_by_email(email: str) -> UserResponse:
+    """Get user by email address."""
+    db = SessionLocal()
+    try:
+        user_service = UserService(db)
+        user_db = await user_service.get_user_by_email(email)
+        
+        if not user_db:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, 
+                              detail="User not found")
+        
+        return UserResponse.from_orm(user_db)
+        
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    finally:
+        db.close()
+
+
+@app.post("/users/reset-password")
+async def reset_password_by_email(email: str, new_password: str):
+    """Reset password for user with given email."""
+    db = SessionLocal()
+    try:
+        user_service = UserService(db)
+        success = await user_service.reset_password_by_email(email, new_password)
+        
+        if success:
+            return {"success": True, "message": "Password reset successfully"}
+        else:
+            return {"success": False, "message": "User not found"}
+            
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                          detail=f"Failed to reset password: {str(e)}")
+    finally:
+        db.close()
+
+
+# === BOOK MANAGEMENT ENDPOINTS ===
+
+@app.post("/books", response_model=BookResponse, status_code=status.HTTP_201_CREATED)
+async def create_book(book_data: BookCreateRequest) -> BookResponse:
+    """Create a new book."""
+    db = SessionLocal()
+    try:
+        book_service = BookService(db)
+        book_response = await book_service.create_book(book_data)
+        return book_response
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    finally:
+        db.close()
+
+
+@app.get("/books", response_model=BookListResponse)
+async def list_books(
+    user_id: str = Query(None, description="Filter books by user ID"),
+    page: int = Query(1, ge=1, description="Page number (1-based)"),
+    per_page: int = Query(50, ge=1, le=100, description="Items per page")
+) -> BookListResponse:
+    """List books with optional user filtering and pagination."""
+    db = SessionLocal()
+    try:
+        book_service = BookService(db)
+        books_response = await book_service.list_books(user_id=user_id, page=page, per_page=per_page)
+        return books_response
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    finally:
+        db.close()
+
+
+@app.get("/books/{book_id}", response_model=BookResponse)
+async def get_book(
+    book_id: str,
+    user_id: str = Query(None, description="Filter by user ownership")
+) -> BookResponse:
+    """Get book by ID with optional user ownership check."""
+    db = SessionLocal()
+    try:
+        book_service = BookService(db)
+        book = await book_service.get_book_by_id(book_id, user_id=user_id)
+        if not book:
+            if user_id:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, 
+                                  detail="Book not found or access denied")
+            else:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, 
+                                  detail="Book not found")
+        return book
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    finally:
+        db.close()
+
+
+@app.put("/books/{book_id}", response_model=BookResponse)
+async def update_book(
+    book_id: str,
+    book_data: BookUpdateRequest,
+    user_id: str = Query(None, description="Ensure user ownership")
+) -> BookResponse:
+    """Update book information with optional ownership check."""
+    db = SessionLocal()
+    try:
+        book_service = BookService(db)
+        book = await book_service.update_book(book_id, book_data, user_id=user_id)
+        if not book:
+            if user_id:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, 
+                                  detail="Book not found or access denied")
+            else:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, 
+                                  detail="Book not found")
+        return book
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    finally:
+        db.close()
+
+
+@app.put("/books/{book_id}/status")
+async def update_book_status(
+    book_id: str,
+    status: str = Query(..., description="New book status"),
+    user_id: str = Query(None, description="Ensure user ownership")
+) -> BookResponse:
+    """Update book processing status with optional ownership check."""
+    db = SessionLocal()
+    try:
+        book_service = BookService(db)
+        book = await book_service.update_book_status(book_id, status, user_id=user_id)
+        if not book:
+            if user_id:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, 
+                                  detail="Book not found or access denied")
+            else:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, 
+                                  detail="Book not found")
+        return book
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    finally:
+        db.close()
+
+
+@app.delete("/books/{book_id}")
+async def delete_book(
+    book_id: str,
+    user_id: str = Query(None, description="Ensure user ownership")
+):
+    """Delete a book with optional ownership check."""
+    db = SessionLocal()
+    try:
+        book_service = BookService(db)
+        success = await book_service.delete_book(book_id, user_id=user_id)
+        if not success:
+            if user_id:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, 
+                                  detail="Book not found or access denied")
+            else:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, 
+                                  detail="Book not found")
+        return {"message": f"Book {book_id} deleted successfully"}
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    finally:
+        db.close()
 
 
 if __name__ == "__main__":
