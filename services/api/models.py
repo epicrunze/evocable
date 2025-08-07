@@ -169,9 +169,11 @@ class DatabaseManager:
     """SQLite database manager for audiobook metadata."""
     
     def __init__(self, db_path: str = None):
-        # Use environment variable or default to in-memory database for testing
+        # Use environment variable - require it to be explicitly set unless overridden
         if db_path is None:
-            db_path = os.getenv("DATABASE_URL", "sqlite:///:memory:")
+            db_path = os.getenv("DATABASE_URL")
+            if db_path is None:
+                raise RuntimeError("DATABASE_URL environment variable is required but not set. Please check your .env file or environment configuration.")
             if db_path.startswith("sqlite:///"):
                 db_path = db_path.replace("sqlite:///", "")
                 if db_path == ":memory:":

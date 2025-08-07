@@ -9,25 +9,8 @@ from sqlalchemy.exc import IntegrityError
 from pydantic import BaseModel, EmailStr, Field, field_validator
 from passlib.context import CryptContext
 
-# Import the User model - we'll need to update the import path
-try:
-    from main import User
-except ImportError:
-    # For testing purposes, we'll define a minimal User class
-    from sqlalchemy import Column, String, Boolean, DateTime
-    from sqlalchemy.ext.declarative import declarative_base
-    Base = declarative_base()
-    
-    class User(Base):
-        __tablename__ = "users"
-        id = Column(String, primary_key=True)
-        username = Column(String, unique=True)
-        email = Column(String, unique=True)
-        password_hash = Column(String)
-        is_active = Column(Boolean, default=True)
-        is_verified = Column(Boolean, default=False)
-        created_at = Column(DateTime, default=datetime.utcnow)
-        updated_at = Column(DateTime, default=datetime.utcnow)
+# Import the User model from shared database models
+from database_models import User
 
 
 # Password hashing setup
@@ -44,6 +27,8 @@ class UserCreateRequest(BaseModel):
     @classmethod
     def validate_username(cls, v):
         """Validate username format."""
+        if v is None:
+            raise ValueError('Username cannot be None')
         if not re.match(r'^[a-zA-Z0-9_-]+$', v):
             raise ValueError('Username can only contain letters, numbers, underscores, and hyphens')
         return v.lower()
@@ -109,7 +94,7 @@ class UserService:
         """Verify a password against its hash."""
         return pwd_context.verify(plain_password, hashed_password)
     
-    async def create_user(self, user_data: UserCreateRequest) -> UserResponse:
+    def create_user(self, user_data: UserCreateRequest) -> UserResponse:
         """Create a new user with validation."""
         try:
             # Check if username already exists
@@ -153,7 +138,7 @@ class UserService:
             self.db.rollback()
             raise e
     
-    async def get_user_by_id(self, user_id: str) -> Optional[UserResponse]:
+    def get_user_by_id(self, user_id: str) -> Optional[UserResponse]:
         """Get user by ID."""
         user = self.db.query(User).filter(User.id == user_id).first()
         return UserResponse.model_validate(user) if user else None
@@ -177,7 +162,7 @@ class UserService:
         
         return None
     
-    async def update_user(self, user_id: str, update_data: UserUpdateRequest) -> Optional[UserResponse]:
+    def update_user(self, user_id: str, update_data: UserUpdateRequest) -> Optional[UserResponse]:
         """Update user information."""
         try:
             user = self.db.query(User).filter(User.id == user_id).first()
@@ -203,7 +188,7 @@ class UserService:
             
             # Apply updates
             update_dict = update_data.model_dump(exclude_unset=True)
-            if 'email' in update_dict:
+            if 'email' in update_dict and update_dict['email'] is not None:
                 update_dict['email'] = update_dict['email'].lower()
             
             for field, value in update_dict.items():
@@ -223,7 +208,7 @@ class UserService:
             self.db.rollback()
             raise e
     
-    async def deactivate_user(self, user_id: str) -> bool:
+    def deactivate_user(self, user_id: str) -> bool:
         """Deactivate a user account."""
         try:
             user = self.db.query(User).filter(User.id == user_id).first()
@@ -240,7 +225,7 @@ class UserService:
             self.db.rollback()
             return False
     
-    async def activate_user(self, user_id: str) -> bool:
+    def activate_user(self, user_id: str) -> bool:
         """Activate a user account."""
         try:
             user = self.db.query(User).filter(User.id == user_id).first()
@@ -257,7 +242,7 @@ class UserService:
             self.db.rollback()
             return False
     
-    async def verify_user_email(self, user_id: str) -> bool:
+    def verify_user_email(self, user_id: str) -> bool:
         """Mark user email as verified."""
         try:
             user = self.db.query(User).filter(User.id == user_id).first()
@@ -274,7 +259,7 @@ class UserService:
             self.db.rollback()
             return False
     
-    async def change_password(self, user_id: str, current_password: str, new_password: str) -> bool:
+    def change_password(self, user_id: str, current_password: str, new_password: str) -> bool:
         """Change user password with current password verification."""
         try:
             user = self.db.query(User).filter(User.id == user_id).first()
@@ -307,7 +292,7 @@ class UserService:
             self.db.rollback()
             return False
     
-    async def list_users(self, skip: int = 0, limit: int = 100, active_only: bool = True) -> List[UserResponse]:
+    def list_users(self, skip: int = 0, limit: int = 100, active_only: bool = True) -> List[UserResponse]:
         """List users with pagination."""
         query = self.db.query(User)
         
@@ -317,7 +302,7 @@ class UserService:
         users = query.offset(skip).limit(limit).all()
         return [UserResponse.model_validate(user) for user in users]
     
-    async def get_user_count(self, active_only: bool = True) -> int:
+    def get_user_count(self, active_only: bool = True) -> int:
         """Get total user count."""
         query = self.db.query(User)
         
@@ -326,7 +311,7 @@ class UserService:
         
         return query.count()
     
-    async def reset_password_by_email(self, email: str, new_password: str) -> bool:
+    def reset_password_by_email(self, email: str, new_password: str) -> bool:
         """Reset password for user with given email."""
         try:
             # Find user by email

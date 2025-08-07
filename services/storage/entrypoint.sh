@@ -7,8 +7,14 @@ WAV_DATA_PATH="${WAV_DATA_PATH:-/data/wav}"
 SEGMENT_DATA_PATH="${SEGMENT_DATA_PATH:-/data/ogg}"
 META_DATA_PATH="${META_DATA_PATH:-/data/meta}"
 
-# Extract database directory from DATABASE_URL if file-based  
-DATABASE_URL="${DATABASE_URL:-sqlite:///data/meta/audiobooks.db}"
+# Validate required environment variables
+if [ -z "$DATABASE_URL" ]; then
+    echo "ERROR: DATABASE_URL environment variable is required but not set."
+    echo "Please ensure DATABASE_URL is defined in your .env file or environment configuration."
+    exit 1
+fi
+
+# Extract database directory from DATABASE_URL if file-based
 if [[ "$DATABASE_URL" == sqlite:///* ]] && [[ "$DATABASE_URL" != *":memory:" ]]; then
     DB_FILE="${DATABASE_URL#sqlite:///}"
     DB_DIR="$(dirname "$DB_FILE")"

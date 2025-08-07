@@ -42,6 +42,8 @@ class RegisterRequest(BaseModel):
     @classmethod
     def validate_username(cls, v: str) -> str:
         """Validate username format."""
+        if v is None:
+            raise ValueError('Username cannot be None')
         if not re.match(r'^[a-zA-Z0-9_-]+$', v):
             raise ValueError('Username can only contain letters, numbers, underscores, and hyphens')
         return v.lower()
@@ -400,22 +402,33 @@ class SessionManager:
     
     async def authenticate_user(self, email: str, password: str) -> Optional[dict]:
         """Authenticate user with email and password using user service."""
+        import logging
+        logger = logging.getLogger("auth_models")
+        logger.error(f"DEBUG: SessionManager.authenticate_user called with email={email}")
+        
         if not self.user_service:
+            logger.error("DEBUG: SessionManager.authenticate_user - no user_service!")
             return None
         
         try:
+            logger.error("DEBUG: SessionManager.authenticate_user - calling user_service.authenticate_user")
             user = await self.user_service.authenticate_user(email, password)
+            logger.error(f"DEBUG: SessionManager.authenticate_user - user result: {user}")
             if user:
+                # user is a dict returned from Redis user service
                 return {
-                    "id": user.id,
-                    "username": user.username,
-                    "email": user.email,
-                    "is_active": user.is_active,
-                    "is_verified": user.is_verified
+                    "id": user["id"],
+                    "username": user["username"], 
+                    "email": user["email"],
+                    "is_active": user["is_active"],
+                    "is_verified": user["is_verified"]
                 }
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error(f"DEBUG: SessionManager.authenticate_user - Exception: {e}")
+            import traceback
+            logger.error(f"DEBUG: SessionManager.authenticate_user - traceback: {traceback.format_exc()}")
         
+        logger.error("DEBUG: SessionManager.authenticate_user - returning None")
         return None
     
     async def get_user_from_token(self, token: str) -> Optional[dict]:
@@ -433,12 +446,13 @@ class SessionManager:
             try:
                 user_response = await self.user_service.get_user_by_id(user_id)
                 if user_response:
+                    # user_response is a dict returned from Redis user service
                     return {
-                        "id": user_response.id,
-                        "username": user_response.username,
-                        "email": user_response.email,
-                        "is_active": user_response.is_active,
-                        "is_verified": user_response.is_verified
+                        "id": user_response["id"],
+                        "username": user_response["username"],
+                        "email": user_response["email"],
+                        "is_active": user_response["is_active"],
+                        "is_verified": user_response["is_verified"]
                     }
             except Exception:
                 pass

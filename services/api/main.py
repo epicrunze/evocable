@@ -16,6 +16,17 @@ from datetime import datetime
 
 print("DEBUG: Basic imports completed")
 
+# Validate critical environment variables early
+try:
+    from env_validation import validate_critical_env_vars
+    validate_critical_env_vars()
+    print("DEBUG: Environment validation passed")
+except ImportError:
+    print("WARNING: Environment validation module not available")
+except RuntimeError as e:
+    print(f"FATAL: Environment validation failed: {e}")
+    raise
+
 from fastapi import FastAPI, HTTPException, Depends, status, Form, File, UploadFile, BackgroundTasks, Query, Request, Path
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -25,6 +36,8 @@ import httpx
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
+
+
 
 # Import our data models
 from models import (
@@ -434,176 +447,12 @@ class StorageBookService:
             return None
 
 
-class StorageUserService:
-    """User service that communicates with storage service."""
-    
-    def __init__(self, storage_url: str):
-        self.storage_url = storage_url.rstrip('/')
-        self.http_client = httpx.AsyncClient()
-    
-    async def authenticate_user(self, email: str, password: str):
-        """Authenticate user via storage service."""
-        try:
-            response = await self.http_client.post(
-                f"{self.storage_url}/users/authenticate",
-                params={"email": email, "password": password}
-            )
-            
-            if response.status_code == 200:
-                data = response.json()
-                if data.get("success"):
-                    # Create a simple user object from the response
-                    user_data = data.get("user", {})
-                    user = SimpleUser(
-                        id=user_data.get("id"),
-                        username=user_data.get("username"),
-                        email=user_data.get("email"),
-                        is_active=user_data.get("is_active", True),
-                        is_verified=user_data.get("is_verified", False)
-                    )
-                    return user
-            return None
-        except Exception as e:
-            print(f"DEBUG: User authentication failed: {e}")
-            return None
-    
-    async def get_user_by_id(self, user_id: str):
-        """Get user by ID via storage service."""
-        try:
-            response = await self.http_client.get(f"{self.storage_url}/users/{user_id}")
-            
-            if response.status_code == 200:
-                data = response.json()
-                return UserProfileResponse(
-                    id=data["id"],
-                    username=data["username"],
-                    email=data["email"],
-                    is_active=data["is_active"],
-                    is_verified=data["is_verified"],
-                    created_at=data.get("created_at"),
-                    updated_at=data.get("updated_at")
-                )
-            return None
-        except Exception as e:
-            print(f"DEBUG: Get user by ID failed: {e}")
-            return None
-    
-    async def create_user(self, user_data: dict):
-        """Create user via storage service."""
-        try:
-            response = await self.http_client.post(
-                f"{self.storage_url}/users",
-                json=user_data
-            )
-            
-            if response.status_code == 201:
-                return response.json()
-            else:
-                # Return error details for proper handling
-                return {"error": response.json().get("detail", "User creation failed")}
-        except Exception as e:
-            print(f"DEBUG: User creation failed: {e}")
-            return {"error": str(e)}
-    
-    async def update_user(self, user_id: str, update_data: dict):
-        """Update user via storage service."""
-        try:
-            response = await self.http_client.put(
-                f"{self.storage_url}/users/{user_id}",
-                json=update_data
-            )
-            
-            if response.status_code == 200:
-                return response.json()
-            else:
-                return {"error": response.json().get("detail", "User update failed")}
-        except Exception as e:
-            print(f"DEBUG: User update failed: {e}")
-            return {"error": str(e)}
-    
-    async def change_password(self, user_id: str, current_password: str, new_password: str):
-        """Change user password via storage service."""
-        try:
-            response = await self.http_client.post(
-                f"{self.storage_url}/users/{user_id}/change-password",
-                params={
-                    "current_password": current_password,
-                    "new_password": new_password
-                }
-            )
-            
-            return response.status_code == 200
-        except Exception as e:
-            print(f"DEBUG: Password change failed: {e}")
-            return False
-    
-    async def reset_password_by_email(self, email: str, new_password: str):
-        """Reset password for user with given email via storage service."""
-        try:
-            response = await self.http_client.post(
-                f"{self.storage_url}/users/reset-password",
-                params={
-                    "email": email,
-                    "new_password": new_password
-                }
-            )
-            
-            if response.status_code == 200:
-                data = response.json()
-                return data.get("success", False)
-            return False
-        except Exception as e:
-            print(f"DEBUG: Password reset failed: {e}")
-            return False
-    
-    async def get_user_by_email(self, email: str):
-        """Get user by email via storage service."""
-        try:
-            response = await self.http_client.get(
-                f"{self.storage_url}/users/by-email/{email}"
-            )
-            
-            if response.status_code == 200:
-                data = response.json()
-                return SimpleUser(
-                    id=data["id"],
-                    username=data["username"],
-                    email=data["email"],
-                    is_active=data["is_active"],
-                    is_verified=data["is_verified"]
-                )
-            return None
-            
-        except Exception as e:
-            print(f"DEBUG: Get user by email failed: {e}")
-            return None
+# Legacy HTTP-based user service code removed - now using Redis queues
+# Simple user classes moved to redis_user_service.py
 
-
-# Simple user classes for type safety
-class SimpleUser:
-    """Simple user class for authentication responses."""
-    def __init__(self, id: str, username: str, email: str, is_active: bool, is_verified: bool):
-        self.id = id
-        self.username = username
-        self.email = email
-        self.is_active = is_active
-        self.is_verified = is_verified
-
-
-class UserProfileResponse:
-    """User profile response class."""
-    def __init__(self, id: str, username: str, email: str, is_active: bool, is_verified: bool, 
-                 created_at: str = None, updated_at: str = None):
-        self.id = id
-        self.username = username
-        self.email = email
-        self.is_active = is_active
-        self.is_verified = is_verified
-        self.created_at = created_at
-        self.updated_at = updated_at
-
-# Create user service instance
-user_service = StorageUserService(os.getenv("STORAGE_URL", "http://storage:8001"))
+# Create user service instance - now using Redis queues
+from redis_user_service import RedisUserService
+user_service = RedisUserService()
 
 # Create book service instance
 book_service = StorageBookService(os.getenv("STORAGE_URL", "http://storage:8001"))
@@ -1015,9 +864,12 @@ async def test_route():
         422: {"description": "Validation error (weak password, invalid format, etc.)"}
     }
 )
-@limiter.limit("100/minute" if os.getenv("DEBUG", "false").lower() == "true" else "3/hour")
+# @limiter.limit("100/minute" if os.getenv("DEBUG", "false").lower() == "true" else "3/hour")
 async def register_user(request: Request, request_data: RegisterRequest) -> UserProfile:
     """Register a new user account."""
+    import logging
+    logger = logging.getLogger("registration")
+    logger.error("DEBUG: ======== INSIDE REGISTER_USER FUNCTION ========")
     try:
         # Prepare user data for storage service
         user_data = {
@@ -1026,10 +878,17 @@ async def register_user(request: Request, request_data: RegisterRequest) -> User
             "password": request_data.password
         }
         
+        logger.error(f"DEBUG: Registration - user_data: {user_data}")
+        logger.error("DEBUG: About to call user_service.create_user")
+        
         # Create user via storage service
         result = await user_service.create_user(user_data)
         
-        if "error" in result:
+        logger.error("DEBUG: user_service.create_user completed")
+        
+        logger.error(f"DEBUG: Registration - result from storage service: {result}")
+        
+        if "error" in result and result["error"] is not None:
             # Handle errors from storage service
             error_msg = result["error"]
             if "already exists" in error_msg.lower():
@@ -1044,19 +903,33 @@ async def register_user(request: Request, request_data: RegisterRequest) -> User
                 )
         
         # Convert storage service response to UserProfile
+        user_data = result["user"]
+        created_at = None
+        updated_at = None
+        
+        if user_data.get("created_at"):
+            created_at = datetime.fromisoformat(user_data["created_at"].replace("Z", "+00:00"))
+        if user_data.get("updated_at"):
+            updated_at = datetime.fromisoformat(user_data["updated_at"].replace("Z", "+00:00"))
+        
         return UserProfile(
-            id=result["id"],
-            username=result["username"],
-            email=result["email"],
-            is_active=result["is_active"],
-            is_verified=result["is_verified"],
-            created_at=datetime.fromisoformat(result["created_at"].replace("Z", "+00:00")),
-            updated_at=datetime.fromisoformat(result["updated_at"].replace("Z", "+00:00"))
+            id=user_data["id"],
+            username=user_data["username"],
+            email=user_data["email"],
+            is_active=user_data["is_active"],
+            is_verified=user_data["is_verified"],
+            created_at=created_at,
+            updated_at=updated_at
         )
         
     except HTTPException:
         raise
     except Exception as e:
+        import traceback
+        import logging
+        logger = logging.getLogger("registration")
+        logger.error(f"Registration error: {str(e)}")
+        logger.error(f"Registration traceback: {traceback.format_exc()}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Registration failed: {str(e)}"
@@ -1316,7 +1189,7 @@ async def update_user_profile(
         # Update user via storage service
         result = await user_service.update_user(user_id, update_data)
         
-        if "error" in result:
+        if "error" in result and result["error"] is not None:
             # Handle errors from storage service
             error_msg = result["error"]
             if "already exists" in error_msg.lower():
@@ -1336,14 +1209,23 @@ async def update_user_profile(
                 )
         
         # Convert storage service response to UserProfile
+        user_data = result["user"]
+        created_at = None
+        updated_at = None
+        
+        if user_data.get("created_at"):
+            created_at = datetime.fromisoformat(user_data["created_at"].replace("Z", "+00:00"))
+        if user_data.get("updated_at"):
+            updated_at = datetime.fromisoformat(user_data["updated_at"].replace("Z", "+00:00"))
+        
         return UserProfile(
-            id=result["id"],
-            username=result["username"],
-            email=result["email"],
-            is_active=result["is_active"],
-            is_verified=result["is_verified"],
-            created_at=datetime.fromisoformat(result["created_at"].replace("Z", "+00:00")),
-            updated_at=datetime.fromisoformat(result["updated_at"].replace("Z", "+00:00"))
+            id=user_data["id"],
+            username=user_data["username"],
+            email=user_data["email"],
+            is_active=user_data["is_active"],
+            is_verified=user_data["is_verified"],
+            created_at=created_at,
+            updated_at=updated_at
         )
         
     except HTTPException:
@@ -2064,7 +1946,7 @@ async def generate_chunk_signed_url(
         
         print(f"DEBUG: Book {book_id} found, generating signed URL")
         # Create a session token for the current user (needed for signed URL)
-        user_token = session_manager.create_session_token(
+        user_token, _ = session_manager.create_session_token(
             user_id=current_user["id"],
             username=current_user["username"]
         )
@@ -2184,26 +2066,56 @@ async def generate_batch_signed_urls(
     book_id: str,
     request: BatchSignedUrlRequest,
     expires_in: int = Query(3600, description="URL expiration time in seconds"),
-    token: str = Depends(verify_authentication)
+    current_user: dict = Depends(get_current_user)
 ) -> BatchSignedUrlResponse:
     """Generate signed URLs for multiple audio chunks at once."""
+    print(f"DEBUG: Batch signed URL endpoint called with book_id={book_id}, user_id={current_user['id']}")
     try:
-        # Verify book exists
-        book = db_manager.get_book(book_id)
-        if not book:
+        # Verify book exists and user has access
+        book_response = await book_service.get_book_by_id(book_id, user_id=current_user["id"])
+        print(f"DEBUG: Book response: {book_response}")
+        if not book_response:
+            print(f"DEBUG: Book {book_id} not found or access denied for user {current_user['id']}")
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Book with ID {book_id} not found"
+                detail=f"Book with ID {book_id} not found or access denied"
             )
         
         # Get chunk sequences from request (already validated by Pydantic)
         chunk_sequences = request.chunks
         
+        # Validate that chunks exist for this book (optional enhancement)
+        # This could check against storage service to ensure chunks actually exist
+        # For now, we'll generate URLs for all requested chunks
+        
+        # Create a session token for the current user (needed for signed URL)
+        user_token, _ = session_manager.create_session_token(
+            user_id=current_user["id"],
+            username=current_user["username"]
+        )
+        
         # Generate signed URLs for all requested chunks
         signed_urls = {}
+        failed_chunks = []
+        
         for seq in chunk_sequences:
-            signed_url = generate_signed_url(book_id, seq, token, expires_in)
-            signed_urls[str(seq)] = signed_url
+            try:
+                signed_url = generate_signed_url(book_id, seq, user_token, expires_in)
+                signed_urls[str(seq)] = signed_url
+            except Exception as e:
+                print(f"DEBUG: Failed to generate signed URL for chunk {seq}: {e}")
+                failed_chunks.append(seq)
+        
+        # If any chunks failed, log warning but continue with successful ones
+        if failed_chunks:
+            print(f"WARNING: Failed to generate signed URLs for chunks: {failed_chunks}")
+        
+        # Return error if no URLs were generated successfully
+        if not signed_urls:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to generate any signed URLs"
+            )
         
         return BatchSignedUrlResponse(
             book_id=book_id,

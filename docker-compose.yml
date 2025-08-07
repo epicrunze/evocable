@@ -16,6 +16,8 @@ services:
       SECRET_KEY: "${SECRET_KEY:-your-secret-key-for-jwt-signing}"
       PASSWORD_RESET_EXPIRY: "${PASSWORD_RESET_EXPIRY:-15}"
       SIGNED_URL_EXPIRY: "${SIGNED_URL_EXPIRY:-3600}"
+      USER_QUEUE_NAME: "${USER_QUEUE_NAME}"
+      USER_RESPONSE_QUEUE_NAME: "${USER_RESPONSE_QUEUE_NAME}"
     volumes:
       - text_data:/data/text  # Shared text storage for processing pipeline
       - segment_data:/data/ogg:ro  # Read-only access to serve audio chunks
@@ -31,7 +33,6 @@ services:
       retries: 3
     networks:
       - evocable-network
-      - default
 
   # Centralized storage and metadata management
   storage:
@@ -48,6 +49,8 @@ services:
       WAV_DATA_PATH: "${WAV_DATA_PATH}"
       SEGMENT_DATA_PATH: "${SEGMENT_DATA_PATH}"
       META_DATA_PATH: "${META_DATA_PATH}"
+      USER_QUEUE_NAME: "${USER_QUEUE_NAME}"
+      USER_RESPONSE_QUEUE_NAME: "${USER_RESPONSE_QUEUE_NAME}"
     volumes:
       - text_data:/data/text
       - wav_data:/data/wav
@@ -61,7 +64,6 @@ services:
       retries: 3
     networks:
       - evocable-network
-      - default
 
   # Message broker for service coordination
   redis:
@@ -82,7 +84,6 @@ services:
       retries: 3
     networks:
       - evocable-network
-      - default
 
   # Text extraction service - triggered by API
   ingest:
@@ -109,6 +110,8 @@ services:
       timeout: 10s
       retries: 3
       start_period: 30s
+    networks:
+      - evocable-network
 
   # Text segmentation service - triggered by ingest completion
   segmenter:
@@ -136,6 +139,8 @@ services:
       timeout: 10s
       retries: 3
       start_period: 30s
+    networks:
+      - evocable-network
 
   # TTS processing service - triggered by segmentation completion
   tts-worker:
@@ -167,6 +172,8 @@ services:
       timeout: 30s
       retries: 3
       start_period: 120s
+    networks:
+      - evocable-network
 
   # Audio transcoding service - triggered by TTS completion
   transcoder:
@@ -197,6 +204,8 @@ services:
       timeout: 10s
       retries: 3
       start_period: 30s
+    networks:
+      - evocable-network
 
   # Test runner service - runs tests inside Docker network
   test:
@@ -226,7 +235,6 @@ services:
       - redis
     networks:
       - evocable-network
-      - default
     command: ["python", "tests/run_tests.py"]
 
 volumes:

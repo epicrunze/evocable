@@ -6,9 +6,11 @@ from typing import Dict, Any, List
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query, status
-from sqlalchemy import create_engine, Column, String, Integer, DateTime, Text, Boolean, ForeignKey
-from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
+
+# Import shared database models
+from database_models import Base, User, Book, AudioChunk
 from datetime import datetime
 from sqlalchemy import text
 from pydantic import BaseModel
@@ -18,6 +20,9 @@ from user_service import UserService, UserCreateRequest, UserUpdateRequest, User
 
 # Import book service and models
 from book_service import BookService, BookCreateRequest, BookUpdateRequest, BookResponse, BookListResponse
+
+# Import environment validation
+from env_validation import get_required_env, validate_critical_env_vars
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -29,8 +34,15 @@ app = FastAPI(
 
 @app.on_event("startup")
 async def startup_event():
-    """Initialize database on application startup."""
+    """Initialize database and start user queue processing on application startup."""
+    import asyncio
+    
+    # Initialize database
     init_database()
+    
+    # Start user queue processing in background
+    from user_queue_processor import start_user_queue_processing
+    asyncio.create_task(start_user_queue_processing())
 
 # Pydantic models for request/response
 class TextData(BaseModel):
@@ -57,8 +69,11 @@ class AudioChunkData(BaseModel):
 class AudioChunksData(BaseModel):
     chunks: list[AudioChunkData]
 
-# Database setup
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///:memory:")
+# Validate critical environment variables at startup
+validate_critical_env_vars()
+
+# Database setup - require DATABASE_URL to be explicitly set
+DATABASE_URL = get_required_env("DATABASE_URL", "SQLite database connection string")
 
 # Only create directories for file-based databases
 if not DATABASE_URL.endswith(":memory:"):
@@ -71,52 +86,47 @@ if not DATABASE_URL.endswith(":memory:"):
 
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-Base = declarative_base()
+# Database models are now imported from database_models.py
 
 
-class User(Base):
-    """User model for authentication."""
-    __tablename__ = "users"
-    
-    id = Column(String, primary_key=True, index=True, default=lambda: str(uuid.uuid4()))
-    username = Column(String, unique=True, index=True, nullable=False)
-    email = Column(String, unique=True, index=True, nullable=False)
-    password_hash = Column(String, nullable=False)
-    is_active = Column(Boolean, default=True, nullable=False)
-    is_verified = Column(Boolean, default=False, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+# Book and Chunk models are now imported from database_models.py
 
-
-class Book(Base):
-    """Book model for database."""
-    __tablename__ = "books"
-    
-    id = Column(String, primary_key=True, index=True)
-    title = Column(String, index=True)
-    format = Column(String)  # pdf, epub, txt
-    status = Column(String)  # processing, completed, failed
-    user_id = Column(String, ForeignKey("users.id"), nullable=False, index=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-
-
-class Chunk(Base):
-    """Audio chunk model for database."""
-    __tablename__ = "chunks"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    book_id = Column(String, index=True)
-    sequence = Column(Integer)
-    duration = Column(Integer)  # in milliseconds
-    file_path = Column(String)
-    created_at = Column(DateTime, default=datetime.utcnow)
+# AudioChunk model is now imported from database_models.py as AudioChunk
 
 
 def init_database():
     """Initialize database tables and default data."""
-    # Create tables
-    Base.metadata.create_all(bind=engine)
+    try:
+        # Ensure all models are imported and registered with Base
+        # Import all models explicitly to register them with Base.metadata
+        from database_models import User, Book, AudioChunk
+        
+        print(f"DEBUG: Registered tables: {list(Base.metadata.tables.keys())}")
+        
+        # Create tables with error handling
+        Base.metadata.create_all(bind=engine)
+        print("DEBUG: Database tables created")
+        
+        # Verify tables were actually created
+        from sqlalchemy import text
+        print(f"DEBUG: Database URL: {DATABASE_URL}")
+        with engine.connect() as connection:
+            result = connection.execute(text("SELECT name FROM sqlite_master WHERE type='table';"))
+            actual_tables = [row[0] for row in result]
+            print(f"DEBUG: Actual tables in database: {actual_tables}")
+            
+            # Also check if we can see users table schema
+            if 'users' in actual_tables:
+                users_schema = connection.execute(text("SELECT sql FROM sqlite_master WHERE name='users';"))
+                print(f"DEBUG: Users table schema: {users_schema.fetchone()}")
+            else:
+                print("DEBUG: Users table not found in actual database!")
+        
+    except Exception as e:
+        print(f"ERROR: Database initialization failed: {e}")
+        import traceback
+        traceback.print_exc()
+    
     # Create default admin user
     create_default_admin_user()
 
@@ -456,7 +466,7 @@ async def authenticate_user(email: str, password: str) -> Dict[str, Any]:
     db = SessionLocal()
     try:
         user_service = UserService(db)
-        authenticated_user = user_service.authenticate_user(email, password)
+        authenticated_user = await user_service.authenticate_user(email, password)
         
         if authenticated_user:
             return {

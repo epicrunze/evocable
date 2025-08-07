@@ -123,7 +123,7 @@ class TestUserService:
         created_user = await user_service.create_user(user_data)
         
         # Test getting user by email
-        retrieved_user = user_service.get_user_by_email("test@example.com")
+        retrieved_user = await user_service.get_user_by_email("test@example.com")
         
         assert retrieved_user is not None
         assert retrieved_user.username == "testuser"
@@ -133,7 +133,7 @@ class TestUserService:
         """Test getting user by email when user doesn't exist."""
         user_service = UserService(db_session)
         
-        user = user_service.get_user_by_email("nonexistent@example.com")
+        user = await user_service.get_user_by_email("nonexistent@example.com")
         
         assert user is None
     
@@ -163,7 +163,7 @@ class TestUserService:
         await user_service.create_user(user_data)
         
         # Test authentication
-        authenticated_user = user_service.authenticate_user(
+        authenticated_user = await user_service.authenticate_user(
             "test@example.com", "TestPass123!"
         )
         
@@ -184,7 +184,7 @@ class TestUserService:
         await user_service.create_user(user_data)
         
         # Test authentication with wrong password
-        authenticated_user = user_service.authenticate_user(
+        authenticated_user = await user_service.authenticate_user(
             "test@example.com", "WrongPassword123!"
         )
         
@@ -203,12 +203,12 @@ class TestUserService:
         await user_service.create_user(user_data)
         
         # Deactivate the user
-        user = user_service.get_user_by_email("test@example.com")
+        user = await user_service.get_user_by_email("test@example.com")
         user.is_active = False
         db_session.commit()
         
         # Test authentication with inactive user
-        authenticated_user = user_service.authenticate_user(
+        authenticated_user = await user_service.authenticate_user(
             "test@example.com", "TestPass123!"
         )
         
@@ -288,7 +288,7 @@ class TestUserService:
         )
         await user_service.create_user(user_data)
         
-        user = user_service.get_user_by_email("test@example.com")
+        user = await user_service.get_user_by_email("test@example.com")
         
         # Change password
         success = await user_service.change_password(
